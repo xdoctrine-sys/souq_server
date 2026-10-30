@@ -1192,7 +1192,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_30_090006) do
   end
 
   create_table "souq_audit_logs", force: :cascade do |t|
-    t.bigint "account_id", null: false
+    t.bigint "account_id"
     t.string "action", null: false
     t.datetime "created_at", null: false
     t.jsonb "recorded_changes", default: {}, null: false
@@ -1687,7 +1687,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_30_090006) do
   add_foreign_key "severed_relationships", "accounts", column: "local_account_id", on_delete: :cascade
   add_foreign_key "severed_relationships", "accounts", column: "remote_account_id", on_delete: :cascade
   add_foreign_key "severed_relationships", "relationship_severance_events", on_delete: :cascade
-  add_foreign_key "souq_audit_logs", "accounts", on_delete: :restrict
+  add_foreign_key "souq_audit_logs", "accounts", on_delete: :nullify
   add_foreign_key "souq_categories", "souq_categories", column: "parent_id", on_delete: :restrict
   add_foreign_key "souq_market_categories", "souq_categories", column: "category_id", on_delete: :cascade
   add_foreign_key "souq_market_categories", "souq_markets", column: "market_id", on_delete: :cascade

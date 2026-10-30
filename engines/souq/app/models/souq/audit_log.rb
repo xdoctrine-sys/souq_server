@@ -4,8 +4,9 @@ module Souq
   class AuditLog < ApplicationRecord
     ACTIONS = %w(create update move reorder activate deactivate import).freeze
 
-    belongs_to :account, class_name: '::Account'
+    belongs_to :account, class_name: '::Account', optional: true
 
+    validates :account, presence: true, on: :create
     validates :action, inclusion: { in: ACTIONS }
     validates :target_type, presence: true
     validates :target_id, numericality: { only_integer: true, greater_than: 0 }
