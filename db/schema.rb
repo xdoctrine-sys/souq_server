@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_30_090006) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_30_120003) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -1234,6 +1234,69 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_30_090006) do
     t.check_constraint "parent_id IS NULL OR parent_id <> id", name: "souq_category_not_own_parent"
   end
 
+  create_table "souq_listings", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.jsonb "attribute_values", default: {}, null: false
+    t.string "category_code", null: false
+    t.bigint "category_id"
+    t.datetime "created_at", null: false
+    t.string "currency", limit: 3
+    t.datetime "expires_at"
+    t.boolean "local", null: false
+    t.bigint "location_id"
+    t.bigint "price_minor"
+    t.integer "price_mode", null: false
+    t.integer "price_period", default: 0, null: false
+    t.datetime "published_at", null: false
+    t.integer "remote_payload_version"
+    t.integer "sale_mode", default: 0, null: false
+    t.datetime "sold_at"
+    t.integer "state", default: 0, null: false
+    t.bigint "status_id", null: false
+    t.string "title", limit: 140, null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id", "published_at"], name: "index_souq_listings_account_recent", order: { published_at: :desc }
+    t.index ["attribute_values"], name: "index_souq_listings_on_attribute_values", opclass: :jsonb_path_ops, using: :gin
+    t.index ["category_id", "state", "price_minor", "status_id"], name: "index_souq_listings_category_price", where: "(price_minor IS NOT NULL)"
+    t.index ["category_id", "state", "published_at"], name: "index_souq_listings_category_recent", order: { published_at: :desc }
+    t.index ["location_id"], name: "index_souq_listings_on_location_id"
+    t.index ["status_id"], name: "index_souq_listings_on_status_id", unique: true
+    t.check_constraint "(price_mode = ANY (ARRAY[0, 1])) AND price_minor IS NOT NULL AND price_minor > 0 AND currency IS NOT NULL OR (price_mode = ANY (ARRAY[2, 3, 4])) AND price_minor IS NULL AND currency IS NULL", name: "souq_listing_price_consistency"
+    t.check_constraint "char_length(title::text) >= 1 AND char_length(title::text) <= 140", name: "souq_listing_title"
+    t.check_constraint "currency IS NULL OR currency ~ '^[A-Z]{3}$'::text", name: "souq_listing_currency"
+    t.check_constraint "jsonb_typeof(attribute_values) = 'object'::text", name: "souq_listing_attribute_object"
+    t.check_constraint "price_minor IS NULL OR price_minor > 0", name: "souq_listing_positive_price"
+    t.check_constraint "price_mode >= 0 AND price_mode <= 4", name: "souq_listing_price_mode"
+    t.check_constraint "price_period = 0 OR (price_mode = ANY (ARRAY[0, 1]))", name: "souq_listing_period_consistency"
+    t.check_constraint "price_period >= 0 AND price_period <= 4", name: "souq_listing_price_period"
+    t.check_constraint "sale_mode >= 0 AND sale_mode <= 1", name: "souq_listing_sale_mode"
+    t.check_constraint "state >= 0 AND state <= 4", name: "souq_listing_state"
+  end
+
+  create_table "souq_locations", force: :cascade do |t|
+    t.boolean "active", default: true, null: false
+    t.bigint "ancestor_ids", default: [], null: false, array: true
+    t.string "code", null: false
+    t.datetime "created_at", null: false
+    t.integer "depth", limit: 2, default: 0, null: false
+    t.integer "kind", default: 0, null: false
+    t.string "name_ar", null: false
+    t.string "name_en", null: false
+    t.bigint "parent_id"
+    t.integer "position", default: 0, null: false
+    t.datetime "updated_at", null: false
+    t.index ["ancestor_ids"], name: "index_souq_locations_on_ancestor_ids", using: :gin
+    t.index ["code"], name: "index_souq_locations_on_code", unique: true
+    t.index ["parent_id", "position"], name: "index_souq_locations_on_parent_id_and_position"
+    t.check_constraint "(kind = 0) = (parent_id IS NULL)", name: "souq_location_kind_root"
+    t.check_constraint "(parent_id IS NULL) = (cardinality(ancestor_ids) = 0)", name: "souq_location_root"
+    t.check_constraint "NOT (id = ANY (ancestor_ids))", name: "souq_location_not_own_ancestor"
+    t.check_constraint "depth = cardinality(ancestor_ids) AND depth <= 2", name: "souq_location_depth"
+    t.check_constraint "kind >= 0 AND kind <= 2", name: "souq_location_kind"
+    t.check_constraint "parent_id IS NULL OR ancestor_ids[cardinality(ancestor_ids)] = parent_id", name: "souq_location_last_ancestor"
+    t.check_constraint "parent_id IS NULL OR parent_id <> id", name: "souq_location_not_own_parent"
+  end
+
   create_table "souq_market_categories", force: :cascade do |t|
     t.bigint "category_id", null: false
     t.string "cover_url"
@@ -1689,6 +1752,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_30_090006) do
   add_foreign_key "severed_relationships", "relationship_severance_events", on_delete: :cascade
   add_foreign_key "souq_audit_logs", "accounts", on_delete: :nullify
   add_foreign_key "souq_categories", "souq_categories", column: "parent_id", on_delete: :restrict
+  add_foreign_key "souq_listings", "accounts", on_delete: :cascade
+  add_foreign_key "souq_listings", "souq_categories", column: "category_id", on_delete: :restrict
+  add_foreign_key "souq_listings", "souq_locations", column: "location_id", on_delete: :restrict
+  add_foreign_key "souq_listings", "statuses", on_delete: :cascade
+  add_foreign_key "souq_locations", "souq_locations", column: "parent_id", on_delete: :restrict
   add_foreign_key "souq_market_categories", "souq_categories", column: "category_id", on_delete: :cascade
   add_foreign_key "souq_market_categories", "souq_markets", column: "market_id", on_delete: :cascade
   add_foreign_key "status_edits", "accounts", on_delete: :nullify

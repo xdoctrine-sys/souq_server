@@ -1,0 +1,83 @@
+# Proposition uniquement : a valider par ben.
+# Municipalites proposees comme regions de navigation, pas une liste officielle.
+# Aucun code ne charge ce fichier. Import futur T3 apres validation.
+validation: 'a valider par ben'
+country_code: QA
+locations:
+  - {
+      code: doha_region,
+      parent_code: null,
+      kind: region,
+      name_en: Doha,
+      name_ar: 'الدوحة',
+    }
+  - {
+      code: al_rayyan_region,
+      parent_code: null,
+      kind: region,
+      name_en: Al Rayyan,
+      name_ar: 'الريان',
+    }
+  - {
+      code: al_wakrah_region,
+      parent_code: null,
+      kind: region,
+      name_en: Al Wakrah,
+      name_ar: 'الوكرة',
+    }
+  - {
+      code: al_khor_region,
+      parent_code: null,
+      kind: region,
+      name_en: Al Khor and Al Thakhira,
+      name_ar: 'الخور والذخيرة',
+    }
+  - {
+      code: al_shamal_region,
+      parent_code: null,
+      kind: region,
+      name_en: Al Shamal,
+      name_ar: 'الشمال',
+    }
+  - {
+      code: umm_salal_region,
+      parent_code: null,
+      kind: region,
+      name_en: Umm Salal,
+      name_ar: 'أم صلال',
+    }
+  - {
+      code: al_daayen_region,
+      parent_code: null,
+      kind: region,
+      name_en: Al Daayen,
+      name_ar: 'الظعاين',
+    }
+  - {
+      code: al_shahaniya_region,
+      parent_code: null,
+      kind: region,
+      name_en: Al Shahaniya,
+      name_ar: 'الشحانية',
+    }
+  - {
+      code: doha,
+      parent_code: doha_region,
+      kind: city,
+      name_en: Doha,
+      name_ar: 'الدوحة',
+    }
+  - {
+      code: al_wakrah,
+      parent_code: al_wakrah_region,
+      kind: city,
+      name_en: Al Wakrah,
+      name_ar: 'الوكرة',
+    }
+  - {
+      code: west_bay,
+      parent_code: doha,
+      kind: area,
+      name_en: West Bay,
+      name_ar: 'الخليج الغربي',
+    }

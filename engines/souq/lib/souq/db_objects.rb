@@ -43,13 +43,23 @@ module Souq
       EXECUTE FUNCTION souq_check_category_tree();
     SQL
 
-    def self.install!(connection = ActiveRecord::Base.connection)
-      connection.execute(SQL) if connection.data_source_exists?('souq_categories')
+    TABLES = { 'souq_categories' => 'category', 'souq_locations' => 'location' }.freeze
+
+    def self.tree_sql(table)
+      noun = TABLES.fetch(table)
+      SQL.gsub('souq_categories', table).gsub('category', noun)
     end
 
-    def self.uninstall!(connection = ActiveRecord::Base.connection)
-      connection.execute('DROP TRIGGER IF EXISTS souq_categories_tree_check ON souq_categories')
-      connection.execute('DROP FUNCTION IF EXISTS souq_check_category_tree()')
+    def self.install!(connection = ActiveRecord::Base.connection, table: nil)
+      (table ? [table] : TABLES.keys).each do |name|
+        connection.execute(tree_sql(name)) if connection.data_source_exists?(name)
+      end
+    end
+
+    def self.uninstall!(connection = ActiveRecord::Base.connection, table: 'souq_categories')
+      noun = TABLES.fetch(table)
+      connection.execute("DROP TRIGGER IF EXISTS #{table}_tree_check ON #{table}")
+      connection.execute("DROP FUNCTION IF EXISTS souq_check_#{noun}_tree()")
     end
 
     module SchemaLoader
