@@ -4,11 +4,11 @@
 
 Read once by the engine initializer at boot, without any database write:
 
-| Variable | Default | Validation |
-|---|---|---|
-| `SOUQ_COUNTRY_CODE` | `QA` | Two uppercase ASCII letters (ISO alpha-2 format) |
-| `SOUQ_DEFAULT_CURRENCY` | `QAR` | Must belong to the allowed list |
-| `SOUQ_ALLOWED_CURRENCIES` | `QAR` | Nonempty comma-separated supported codes, whitespace trimmed |
+| Variable                  | Default | Validation                                                   |
+| ------------------------- | ------- | ------------------------------------------------------------ |
+| `SOUQ_COUNTRY_CODE`       | `QA`    | Two uppercase ASCII letters (ISO alpha-2 format)             |
+| `SOUQ_DEFAULT_CURRENCY`   | `QAR`   | Must belong to the allowed list                              |
+| `SOUQ_ALLOWED_CURRENCIES` | `QAR`   | Nonempty comma-separated supported codes, whitespace trimmed |
 
 Supported currency exponents: QAR, SAR, AED = 2; KWD, BHD, OMR = 3.
 Unknown currencies, empty entries and invalid configuration abort boot.
