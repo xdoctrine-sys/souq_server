@@ -7,6 +7,12 @@ GIT
       hkdf (~> 0.2)
       jwt (~> 2.0)
 
+PATH
+  remote: engines/souq
+  specs:
+    souq (0.1.0)
+      rails (~> 8.1)
+
 GEM
   remote: https://rubygems.org/
   specs:
@@ -1075,6 +1081,7 @@ DEPENDENCIES
   simple_form (~> 5.2)
   simplecov
   simplecov-lcov (~> 0.8)
+  souq!
   stackprof
   stoplight
   strong_migrations

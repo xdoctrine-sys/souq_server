@@ -1,0 +1,50 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require 'open3'
+
+UPSTREAM_BASE = 'v4.7.4'
+UPSTREAM_BASE_SHA = 'd04059fc80be5cbba6b4dd5a8b94d63ffff09f2c'
+
+def git!(*args)
+  command = ['git', *args]
+  output, error, status = Open3.capture3(*command)
+  raise error.strip unless status.success?
+
+  output
+end
+
+begin
+  actual = git!('rev-parse', "#{UPSTREAM_BASE}^{commit}").strip
+  unless actual == UPSTREAM_BASE_SHA
+    warn "base inattendue: #{UPSTREAM_BASE} (#{actual})"
+    exit 2
+  end
+
+  root = git!('rev-parse', '--show-toplevel').strip
+  Dir.chdir(root)
+  document = File.read(File.expand_path('../UPSTREAM_TOUCHPOINTS.md', __dir__))
+  block = document.match(/```text\n(.*?)\n```/m)
+  raise 'missing closed allowlist' unless block
+
+  allowed = block[1].lines.map(&:strip)
+  commands = [
+    ['diff', '-z', '--name-only', '--no-renames', "#{UPSTREAM_BASE}..HEAD"],
+    ['diff', '-z', '--name-only', '--no-renames', '--cached'],
+    ['diff', '-z', '--name-only', '--no-renames'],
+    ['ls-files', '-z', '--others', '--exclude-standard'],
+  ]
+  paths = commands.flat_map { |args| git!(*args).split("\0") }.uniq
+  forbidden = paths.reject do |path|
+    path.start_with?('engines/souq/', 'spec/souq/') || allowed.include?(path)
+  end
+  if forbidden.any?
+    forbidden.sort.each { |path| puts "INTERDIT: #{path.dump}" }
+    exit 1
+  end
+
+  puts "REUSSI: #{paths.size} chemin(s) controle(s), aucun hors liste."
+rescue => e
+  warn "base inattendue ou controle impossible: #{e.message}"
+  exit 2
+end

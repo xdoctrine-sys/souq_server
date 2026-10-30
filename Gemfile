@@ -6,6 +6,7 @@ ruby '>= 3.3.0', '< 4.1.0'
 gem 'propshaft'
 gem 'puma'
 gem 'rails', '~> 8.1.0'
+gem 'souq', path: 'engines/souq'
 gem 'thor', '~> 1.2'
 
 gem 'dotenv'
