@@ -95,8 +95,6 @@ WORKDIR /opt/mastodon
 # hadolint ignore=DL3008,DL3005
 RUN \
   # Mount Apt cache and lib directories from Docker buildx caches
-  --mount=type=cache,id=apt-cache-${TARGETPLATFORM},target=/var/cache/apt,sharing=locked \
-  --mount=type=cache,id=apt-lib-${TARGETPLATFORM},target=/var/lib/apt,sharing=locked \
   # Update package list and upgrade system packages
   apt-get update; \
   apt-get dist-upgrade -yq; \
@@ -164,8 +162,6 @@ SHELL ["/bin/bash", "-o", "pipefail", "-o", "errexit", "-c"]
 
 # hadolint ignore=DL3008
 RUN \
-  --mount=type=cache,id=apt-native-cache-${TARGETPLATFORM},target=/var/cache/apt,sharing=locked \
-  --mount=type=cache,id=apt-native-lib-${TARGETPLATFORM},target=/var/lib/apt,sharing=locked \
   # Remove automatic apt cache Docker cleanup scripts
   rm -f /etc/apt/apt.conf.d/docker-clean; \
   # Install build tools for native libraries
@@ -282,8 +278,6 @@ ARG TARGETPLATFORM
 # hadolint ignore=DL3008
 RUN \
   # Mount Apt cache and lib directories from Docker buildx caches
-  --mount=type=cache,id=apt-cache-${TARGETPLATFORM},target=/var/cache/apt,sharing=locked \
-  --mount=type=cache,id=apt-lib-${TARGETPLATFORM},target=/var/lib/apt,sharing=locked \
   # Install build tools and bundler dependencies from APT
   apt-get install -y --no-install-recommends \
   build-essential \
@@ -315,7 +309,6 @@ RUN ldconfig
 
 RUN \
   # Mount Ruby Gem caches
-  --mount=type=cache,id=gem-cache-${TARGETPLATFORM},target=/usr/local/bundle/cache/,sharing=locked \
   # Configure bundle to prevent changes to Gemfile and Gemfile.lock
   bundle config set --global frozen "true"; \
   # Configure bundle to not cache downloaded Gems
@@ -341,8 +334,6 @@ COPY --from=node /usr/local/lib /usr/local/lib
 
 RUN \
   # Mount local Corepack and Yarn caches from Docker buildx caches
-  --mount=type=cache,id=corepack-cache-${TARGETPLATFORM},target=/usr/local/share/.cache/corepack,sharing=locked \
-  --mount=type=cache,id=yarn-cache-${TARGETPLATFORM},target=/usr/local/share/.cache/yarn,sharing=locked \
   # Remove pre-installed Yarn binaries (only present on Node <26)
   rm -f /usr/local/bin/yarn*; \
   # Install Corepack
@@ -350,8 +341,6 @@ RUN \
 
 # hadolint ignore=DL3008
 RUN \
-  --mount=type=cache,id=corepack-cache-${TARGETPLATFORM},target=/usr/local/share/.cache/corepack,sharing=locked \
-  --mount=type=cache,id=yarn-cache-${TARGETPLATFORM},target=/usr/local/share/.cache/yarn,sharing=locked \
   # Install Node.js packages
   yarn workspaces focus --production @mastodon/mastodon;
 
