@@ -1,8 +1,14 @@
 # frozen_string_literal: true
 
+require_relative 'db_objects'
+
 module Souq
   class Engine < ::Rails::Engine
     isolate_namespace Souq
+
+    initializer 'souq.schema_loader' do
+      ActiveRecord::Tasks::DatabaseTasks.prepend(Souq::DbObjects::SchemaLoader)
+    end
 
     initializer 'souq.append_migrations' do |app|
       app.config.paths['db/migrate'].concat(config.paths['db/migrate'].expanded) unless app.root == root

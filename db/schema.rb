@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_12_154114) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_30_090006) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -1191,6 +1191,85 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_12_154114) do
     t.index ["version"], name: "index_software_updates_on_version", unique: true
   end
 
+  create_table "souq_audit_logs", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.string "action", null: false
+    t.datetime "created_at", null: false
+    t.jsonb "recorded_changes", default: {}, null: false
+    t.bigint "target_id", null: false
+    t.string "target_type", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id"], name: "index_souq_audit_logs_on_account_id"
+    t.index ["target_type", "target_id"], name: "index_souq_audit_logs_on_target_type_and_target_id"
+  end
+
+  create_table "souq_categories", force: :cascade do |t|
+    t.boolean "active", default: true, null: false
+    t.bigint "ancestor_ids", default: [], null: false, array: true
+    t.string "code", null: false
+    t.string "color"
+    t.string "cover_url"
+    t.datetime "created_at", null: false
+    t.integer "depth", limit: 2, default: 0, null: false
+    t.text "description_ar"
+    t.text "description_en"
+    t.string "hashtag"
+    t.string "hashtag_ar"
+    t.string "icon"
+    t.boolean "listable", default: true, null: false
+    t.integer "lock_version", default: 0, null: false
+    t.string "name_ar", null: false
+    t.string "name_en", null: false
+    t.bigint "parent_id"
+    t.integer "position", default: 0, null: false
+    t.datetime "updated_at", null: false
+    t.index ["ancestor_ids"], name: "index_souq_categories_on_ancestor_ids", using: :gin
+    t.index ["code"], name: "index_souq_categories_on_code", unique: true
+    t.index ["hashtag"], name: "index_souq_categories_on_hashtag"
+    t.index ["parent_id", "position"], name: "index_souq_categories_on_parent_id_and_position"
+    t.check_constraint "(parent_id IS NULL) = (cardinality(ancestor_ids) = 0)", name: "souq_category_root"
+    t.check_constraint "NOT (id = ANY (ancestor_ids))", name: "souq_category_not_own_ancestor"
+    t.check_constraint "depth = cardinality(ancestor_ids) AND depth <= 3", name: "souq_category_depth"
+    t.check_constraint "parent_id IS NULL OR ancestor_ids[cardinality(ancestor_ids)] = parent_id", name: "souq_category_last_ancestor"
+    t.check_constraint "parent_id IS NULL OR parent_id <> id", name: "souq_category_not_own_parent"
+  end
+
+  create_table "souq_market_categories", force: :cascade do |t|
+    t.bigint "category_id", null: false
+    t.string "cover_url"
+    t.datetime "created_at", null: false
+    t.boolean "featured", default: false, null: false
+    t.bigint "market_id", null: false
+    t.integer "position", default: 0, null: false
+    t.datetime "updated_at", null: false
+    t.index ["market_id", "category_id"], name: "index_souq_market_categories_on_market_id_and_category_id", unique: true
+    t.index ["market_id", "position"], name: "index_souq_market_categories_on_market_id_and_position"
+  end
+
+  create_table "souq_markets", force: :cascade do |t|
+    t.boolean "active", default: true, null: false
+    t.string "code", null: false
+    t.string "color"
+    t.string "cover_url"
+    t.datetime "created_at", null: false
+    t.text "description_ar"
+    t.text "description_en"
+    t.string "icon"
+    t.string "name_ar", null: false
+    t.string "name_en", null: false
+    t.integer "position", default: 0, null: false
+    t.datetime "updated_at", null: false
+    t.index ["code"], name: "index_souq_markets_on_code", unique: true
+  end
+
+  create_table "souq_settings", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.bigint "taxonomy_version", default: 1, null: false
+    t.datetime "updated_at", null: false
+    t.check_constraint "id = 1", name: "souq_settings_singleton"
+    t.check_constraint "taxonomy_version >= 1", name: "souq_settings_version"
+  end
+
   create_table "status_edits", force: :cascade do |t|
     t.bigint "account_id"
     t.datetime "created_at", null: false
@@ -1608,6 +1687,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_12_154114) do
   add_foreign_key "severed_relationships", "accounts", column: "local_account_id", on_delete: :cascade
   add_foreign_key "severed_relationships", "accounts", column: "remote_account_id", on_delete: :cascade
   add_foreign_key "severed_relationships", "relationship_severance_events", on_delete: :cascade
+  add_foreign_key "souq_audit_logs", "accounts", on_delete: :restrict
+  add_foreign_key "souq_categories", "souq_categories", column: "parent_id", on_delete: :restrict
+  add_foreign_key "souq_market_categories", "souq_categories", column: "category_id", on_delete: :cascade
+  add_foreign_key "souq_market_categories", "souq_markets", column: "market_id", on_delete: :cascade
   add_foreign_key "status_edits", "accounts", on_delete: :nullify
   add_foreign_key "status_edits", "statuses", on_delete: :cascade
   add_foreign_key "status_pins", "accounts", name: "fk_d4cb435b62", on_delete: :cascade
