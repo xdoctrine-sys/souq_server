@@ -1,10 +1,15 @@
 # frozen_string_literal: true
 
 require_relative 'db_objects'
+require_relative 'configuration'
 
 module Souq
   class Engine < ::Rails::Engine
     isolate_namespace Souq
+
+    initializer 'souq.configuration' do
+      Souq.configuration
+    end
 
     initializer 'souq.schema_loader' do
       ActiveRecord::Tasks::DatabaseTasks.prepend(Souq::DbObjects::SchemaLoader)

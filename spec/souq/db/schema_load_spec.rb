@@ -19,13 +19,15 @@ RSpec.describe 'SOUQ schema restoration in isolated processes' do # rubocop:disa
           flags = [
             connection.select_value("SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'souq_check_category_tree')"),
             connection.select_value("SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'souq_categories_tree_check' AND tgdeferrable AND tginitdeferred)"),
+            connection.select_value("SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'souq_check_location_tree')"),
+            connection.select_value("SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'souq_locations_tree_check' AND tgdeferrable AND tginitdeferred)"),
             connection.select_value("SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'timestamp_id')")
           ]
           puts flags.to_json
         RUBY
         output, errors, status = Open3.capture3(environment, 'bundle', 'exec', 'rails', 'runner', query)
         expect(status.success?).to be(true), errors
-        expect(JSON.parse(output.lines.last)).to eq([true, true, true])
+        expect(JSON.parse(output.lines.last)).to eq([true, true, true, true, true])
       ensure
         Open3.capture3(environment, 'bundle', 'exec', 'rails', 'db:drop')
       end
