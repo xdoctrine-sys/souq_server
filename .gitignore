@@ -42,6 +42,10 @@ node_modules/
 /redis
 /elasticsearch
 
+# Ignore local Postgres data directory
+.postgres-data
+.postgres-data/
+
 # Ignore Apple files
 .DS_Store
 
