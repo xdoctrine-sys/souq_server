@@ -17,6 +17,7 @@ config/navigation.rb
 .gitignore
 Dockerfile
 streaming/Dockerfile
+.github/workflows/souq.yml
 ```
 
 - `engines/souq/**` and `spec/souq/**` contain new SOUQ code and tests.

@@ -3,8 +3,9 @@
 require 'rails_helper'
 require_relative '../support/souq_proof'
 
-RSpec.describe 'SOUQ atomic creation proof', type: :request, use_transactional_tests: false do
+RSpec.describe 'SOUQ atomic creation proof', if: ENV['SOUQ_COMMIT_PROOF'] == '1', type: :request, use_transactional_tests: false do
   let(:account) { Fabricate(:user).account }
+  let!(:roles_before) { UserRole.order(:id).pluck(:id, :name) }
 
   before do
     Status.connection.create_table(:souq_proof_records) do |table|
@@ -23,10 +24,9 @@ RSpec.describe 'SOUQ atomic creation proof', type: :request, use_transactional_t
     Souq::Current.reset
     SouqProof.uninstall!
     Status.connection.drop_table(:souq_proof_records, if_exists: true)
-    # These examples deliberately commit. Restore the dedicated test database.
-    DatabaseCleaner.clean
-    Rails.application.load_seed
-    Setting.registrations_mode = 'open'
+    SouqProof.cleanup!(account)
+    # Every real-commit example must preserve seeded role identities.
+    expect(UserRole.order(:id).pluck(:id, :name)).to eq(roles_before) # rubocop:disable RSpec/ExpectInHook
   end
 
   def post_status(**options)

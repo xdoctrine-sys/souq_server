@@ -38,4 +38,14 @@ module SouqProof
     @attributes&.each { |serializer, attributes| serializer._attributes_data = attributes }
     @callback = @serializers = @attributes = nil
   end
+
+  def self.cleanup!(account)
+    ApplicationRecord.transaction do
+      Status.unscoped.where(account_id: account.id).destroy_all
+      # Conversations have no cascading FK to their parent account or status.
+      Conversation.where(parent_account_id: account.id).delete_all
+      # Associated users, keypairs and statistics are destroyed or cascade by FK.
+      account.destroy!
+    end
+  end
 end
