@@ -300,6 +300,7 @@ ARG TARGETPLATFORM
 
 # Copy Gemfile config into working directory
 COPY Gemfile* /opt/mastodon/
+COPY engines/souq /opt/mastodon/engines/souq
 
 # Copy libvips for gems that need it during install
 COPY --from=libvips /usr/local/libvips/lib /usr/local/lib
