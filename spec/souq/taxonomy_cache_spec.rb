@@ -24,6 +24,10 @@ RSpec.describe Souq::TaxonomyCache do
     statements
   end
 
+  def render_listing(listing)
+    JSON.parse(Souq::REST::ListingSerializer.new(listing).to_json)
+  end
+
   it 'reads the version from the Redis key' do
     expect(described_class.version).to eq(version)
   end
@@ -58,6 +62,7 @@ RSpec.describe Souq::TaxonomyCache do
 
     cars.update!(name_en: 'Voitures')
     write_taxonomy_version(version + 1)
+    Souq::Current.reset # a version change is observed at the next request boundary
 
     reloaded = nil
     statements = queries_during { reloaded = described_class.category('cars') }
@@ -65,6 +70,37 @@ RSpec.describe Souq::TaxonomyCache do
     expect(reloaded).to include(name_en: 'Voitures')
     expect(statements).to_not be_empty
     expect(described_class.version).to eq(version + 1)
+  end
+
+  it 'serves one coherent version inside a single Souq::Current scope' do
+    listing = Fabricate(:souq_listing, category: cars, category_code: 'cars')
+
+    first = render_listing(listing)
+    expect(first.fetch('category')).to include('code' => 'cars', 'name_en' => 'Cars')
+    expect(first.fetch('taxonomy_version')).to eq(version)
+
+    cars.update!(name_en: 'Voitures')
+    write_taxonomy_version(version + 1)
+
+    second = render_listing(listing)
+    expect(second.fetch('category')).to include('name_en' => 'Cars')
+    expect(second.fetch('taxonomy_version')).to eq(version)
+
+    Souq::Current.reset
+
+    third = render_listing(listing)
+    expect(third.fetch('category')).to include('name_en' => 'Voitures')
+    expect(third.fetch('taxonomy_version')).to eq(version + 1)
+  end
+
+  it 'freezes the snapshot so callers cannot mutate the cached taxonomy' do
+    snapshot = described_class.snapshot
+
+    expect(snapshot).to be_frozen
+    expect(snapshot.version).to eq(version)
+    expect(snapshot.category('cars')).to be_frozen
+    expect(snapshot.category('cars')[:path]).to be_frozen
+    expect(snapshot.category('cars')[:path].first).to be_frozen
   end
 
   it 'falls back to souq_settings.taxonomy_version and writes the key when Redis is empty' do

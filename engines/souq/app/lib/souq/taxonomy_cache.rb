@@ -3,53 +3,111 @@
 module Souq
   # Process-memory snapshot of the taxonomy tree (categories and locations).
   #
-  # The snapshot is keyed by the taxonomy version, which is read from Redis with
-  # a single GET so that every process reloads the tree as soon as an
-  # administrator bumps the version. T2 owns version increments; T10 only
-  # mirrors the bootstrap value the first time the key is missing.
+  # The snapshot is keyed by the taxonomy version. The version is read from
+  # Redis once per render: `snapshot` memoizes the built Snapshot in
+  # Souq::Current, which Rails clears at the end of every request and every
+  # Sidekiq job, so the snapshot lives exactly one render. Outside those
+  # boundaries (console, rake, one-off scripts) nothing clears Souq::Current,
+  # so call Souq::Current.reset (or reset! below) to observe a version change.
+  #
+  # T2 owns version increments; T10 only mirrors the bootstrap value the first
+  # time the Redis key is missing.
   #
   # The serializer reads categories and locations from this snapshot, so it
-  # never issues a SQL query for them.
+  # never issues a SQL query for them once the snapshot is loaded.
   class TaxonomyCache
     REDIS_KEY = 'souq:taxonomy:version'
     BOOTSTRAP_VERSION = 1
 
+    # Guards only the comparison and the swap of the process tree. The Redis
+    # GET and the request snapshot live outside it.
     MUTEX = Mutex.new
 
-    class << self
-      def version
-        read_version
+    # Immutable, coherent view of the taxonomy for a single version: the
+    # category label and the version always come from the same read.
+    class Snapshot
+      attr_reader :version
+
+      def initialize(version:, categories:, locations_by_id:)
+        @version = version
+        @categories = deep_freeze(categories)
+        @locations_by_id = deep_freeze(locations_by_id)
+        freeze
       end
 
       def category(code)
         return if code.nil?
 
-        tree[:categories][code]
+        @categories[code]
+      end
+
+      def location(id)
+        return if id.nil?
+
+        @locations_by_id[id]
+      end
+
+      private
+
+      def deep_freeze(value)
+        case value
+        when Hash
+          value.each do |key, item|
+            deep_freeze(key)
+            deep_freeze(item)
+          end
+        when Array
+          value.each { |item| deep_freeze(item) }
+        end
+        value.freeze
+      end
+    end
+
+    class << self
+      # The snapshot for the current request or job, built from exactly one
+      # version read.
+      def snapshot
+        ::Souq::Current.taxonomy_snapshot ||= build_snapshot
+      end
+
+      def version
+        snapshot.version
+      end
+
+      def category(code)
+        snapshot.category(code)
       end
 
       def location_by_id(id)
-        return if id.nil?
-
-        tree[:locations_by_id][id]
+        snapshot.location(id)
       end
 
-      # Drops the process-memory snapshot. Used by specs; a version bump is
-      # enough to reload in production.
+      # Drops the process tree and the request snapshot. Used by specs; in
+      # production a version bump plus the natural request boundary is enough.
       def reset!
         MUTEX.synchronize do
           @tree = nil
           @tree_version = nil
         end
+        ::Souq::Current.taxonomy_snapshot = nil
       end
 
       private
 
-      def tree
+      def build_snapshot
+        version = read_version
+        tree = tree_for(version)
+        Snapshot.new(version: version, categories: tree[:categories], locations_by_id: tree[:locations_by_id])
+      end
+
+      # The Redis GET happens outside the mutex; the mutex only guards the
+      # comparison and the swap of the process tree. The tree load (SQL) runs
+      # under the mutex, but only when the version changed, which is rare.
+      def tree_for(version)
         MUTEX.synchronize do
-          current = read_version
-          if @tree.nil? || @tree_version != current
+          if @tree.nil? || @tree_version != version
             @tree = load_tree
-            @tree_version = current
+            @tree_version = version
           end
           @tree
         end

@@ -50,18 +50,56 @@ RSpec.describe 'SOUQ status extension', type: :request do
     }
   end
 
-  def timeline_queries(statuses)
-    queries = 0
-    callback = ->(_name, _start, _finish, _id, payload) { queries += 1 unless payload[:name] == 'SCHEMA' }
+  # Counts the SQL statements issued while the block runs, grouped by table,
+  # ignoring schema, transaction and savepoint bookkeeping.
+  def queries_by_table(&block)
+    ignored = %w(SCHEMA TRANSACTION SAVEPOINT)
+    counts = Hash.new(0)
+    callback = lambda do |_name, _start, _finish, _id, payload|
+      next if ignored.include?(payload[:name])
 
-    ActiveSupport::Notifications.subscribed(callback, 'sql.active_record') do
-      Status.preload_cacheable_associations(statuses)
-      statuses.each do |status|
-        serialized_record_json(status, REST::StatusSerializer, options: { scope: nil, scope_name: :current_user })
-      end
+      table = payload[:sql][/(?:FROM|JOIN|INTO|UPDATE)\s+"([^"]+)"/i, 1]
+      counts[table] += 1 if table
     end
+    ActiveSupport::Notifications.subscribed(callback, 'sql.active_record', &block)
+    counts
+  end
 
-    queries
+  def render_statuses(statuses)
+    Status.preload_cacheable_associations(statuses)
+    statuses.each do |status|
+      serialized_record_json(status, REST::StatusSerializer, options: { scope: nil, scope_name: :current_user })
+    end
+  end
+
+  def measure_initial_snapshot_load
+    Souq::Current.reset
+    Souq::TaxonomyCache.reset!
+    queries_by_table { Souq::TaxonomyCache.snapshot }
+  end
+
+  def measure_series(statuses)
+    render_statuses(statuses) # warm-up pass, result ignored
+    queries_by_table { render_statuses(statuses) }
+  end
+
+  def build_plain(count)
+    Array.new(count) { publish(user.account, 'Plain') }
+  end
+
+  def build_listed(count)
+    Array.new(count) do
+      status = publish(user.account, 'Listed')
+      attach_listing(status)
+      status
+    end
+  end
+
+  def expect_flat_timeline(plain_counts, listed_counts)
+    expect(listed_counts.fetch('souq_listings', 0)).to be <= 1
+    expect(listed_counts.fetch('souq_categories', 0)).to eq(0)
+    expect(listed_counts.fetch('souq_locations', 0)).to eq(0)
+    expect(listed_counts.values.sum).to be <= plain_counts.values.sum + 1
   end
 
   describe 'GET /api/v1/statuses/:id' do
@@ -156,18 +194,42 @@ RSpec.describe 'SOUQ status extension', type: :request do
     expect(payload.fetch('souq_listing')).to eq(expected_listing(listing))
   end
 
-  it 'adds at most one query for a 20-status timeline with listings' do
-    warm_taxonomy_cache
-    plain = Array.new(20) { publish(user.account, 'Plain') }
-    listed = Array.new(20) do
-      status = publish(user.account, 'Listed')
-      attach_listing(status)
-      status
+  describe 'timeline query budget' do
+    it 'counts the category and location queries on the initial snapshot load only' do
+      counts = measure_initial_snapshot_load
+
+      expect(counts.fetch('souq_categories', 0)).to be >= 1
+      expect(counts.fetch('souq_locations', 0)).to be >= 1
     end
 
-    plain_queries = timeline_queries(plain)
-    listed_queries = timeline_queries(listed)
+    it 'adds at most one query for 20 listings, measured plain then listed' do
+      measure_initial_snapshot_load
+      plain_counts = measure_series(build_plain(20))
+      listed_counts = measure_series(build_listed(20))
 
-    expect(listed_queries).to be <= plain_queries + 1
+      expect_flat_timeline(plain_counts, listed_counts)
+    end
+
+    it 'adds at most one query for 20 listings, measured listed then plain' do
+      measure_initial_snapshot_load
+      listed_counts = measure_series(build_listed(20))
+      plain_counts = measure_series(build_plain(20))
+
+      expect_flat_timeline(plain_counts, listed_counts)
+    end
+
+    it 'keeps a real public timeline request flat for 20 listings', :inline_jobs do
+      Souq::TaxonomyCache.snapshot # warm the process tree, as the first real request would
+      build_plain(20)
+      plain_counts = queries_by_table { get '/api/v1/timelines/public', headers: headers }
+
+      build_listed(20)
+      listed_counts = queries_by_table { get '/api/v1/timelines/public', headers: headers }
+
+      expect(listed_counts.fetch('souq_listings', 0)).to be <= 1
+      expect(listed_counts.fetch('souq_categories', 0)).to eq(0)
+      expect(listed_counts.fetch('souq_locations', 0)).to eq(0)
+      expect(listed_counts.values.sum).to be <= plain_counts.values.sum + 1
+    end
   end
 end
