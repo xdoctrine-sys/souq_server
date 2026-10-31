@@ -48,6 +48,16 @@ RSpec.describe 'SOUQ listings API', type: :request do
     expect(DistributionWorker.jobs).to be_empty
   end
 
+  # Runs the distribution jobs the request enqueued, so that the fan-out (and
+  # therefore the notifications it may or may not send) actually happens.
+  def run_enqueued_distribution
+    DistributionWorker.jobs.each { |job| DistributionWorker.new.perform(*job['args']) }
+  end
+
+  def distribution_job_arguments
+    DistributionWorker.jobs.map { |job| job['args'] }
+  end
+
   def created_listing_json(listing)
     {
       'id' => listing.id.to_s,
@@ -329,6 +339,20 @@ RSpec.describe 'SOUQ listings API', type: :request do
       end
     end
 
+    it 'notifies the accounts that shared the status when the text changes' do
+      listing = fabricate_listing(account: user.account)
+      reblogger = Fabricate(:account)
+      Fabricate(:status, account: reblogger, reblog: listing.status)
+
+      put "/api/v1/souq/listings/#{listing.id}",
+          params: { status: { status: 'A brand new listing text' }, listing: { title: 'Updated title', price_mode: 'fixed', price: '145000.00' } },
+          headers: headers
+
+      expect(response).to have_http_status(200)
+      expect(distribution_job_arguments).to eq([[listing.status_id, { 'update' => true }]])
+      expect { run_enqueued_distribution }.to enqueue_sidekiq_job(LocalNotificationWorker).with(reblogger.id, listing.status_id, 'Status', 'update')
+    end
+
     it 'refuses to change the category' do
       listing = fabricate_listing(account: user.account)
 
@@ -380,6 +404,18 @@ RSpec.describe 'SOUQ listings API', type: :request do
       expect(redis).to have_received(:publish).with('timeline:public', anything) do |_channel, message|
         expect(JSON.parse(message).fetch('event')).to eq('status.update')
       end
+    end
+
+    it 'refreshes the feed without notifying the accounts that shared the status' do
+      listing = fabricate_listing(account: user.account)
+      reblogger = Fabricate(:account)
+      Fabricate(:status, account: reblogger, reblog: listing.status)
+
+      post "/api/v1/souq/listings/#{listing.id}/state", params: { state: 'sold' }, headers: headers
+
+      expect(response).to have_http_status(200)
+      expect(distribution_job_arguments).to eq([[listing.status_id, { 'update' => true, 'skip_notifications' => true }]])
+      expect { run_enqueued_distribution }.to_not enqueue_sidekiq_job(LocalNotificationWorker)
     end
 
     it 'clears sold_at when the listing becomes active again' do

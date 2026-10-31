@@ -29,8 +29,10 @@ module Souq
           @listing.save!
         end
 
-        # Enqueued after the commit, never inside the transaction.
-        DistributionWorker.perform_async(@listing.status_id, { 'update' => true })
+        # Enqueued after the commit, never inside the transaction. The status text
+        # itself is not edited, so the accounts that shared it must not be
+        # notified: `skip_notifications` keeps the feed refresh silent.
+        DistributionWorker.perform_async(@listing.status_id, { 'update' => true, 'skip_notifications' => true })
 
         @listing
       end

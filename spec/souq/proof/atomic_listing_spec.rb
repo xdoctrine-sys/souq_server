@@ -57,7 +57,7 @@ RSpec.describe 'SOUQ atomic creation proof', if: ENV['SOUQ_COMMIT_PROOF'] == '1'
   # asserted so that a new attribute cannot be added without being covered.
   def expect_current_cleared(context)
     names = Souq::Current.defaults.keys
-    expect(names).to contain_exactly(:listing_draft, :taxonomy_snapshot)
+    expect(names).to contain_exactly(:listing_draft, :listing_update, :taxonomy_snapshot)
     names.each do |name|
       expect(Souq::Current.public_send(name)).to be_nil, "Souq::Current.#{name} was not reset #{context}"
     end
