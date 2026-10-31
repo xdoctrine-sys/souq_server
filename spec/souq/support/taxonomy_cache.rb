@@ -56,8 +56,8 @@ end
 RSpec.configure do |config|
   config.include SouqTaxonomyCacheHelpers
   # Rails clears CurrentAttributes between requests and jobs but not between
-  # examples, so drop the taxonomy snapshot to keep the examples independent.
+  # examples, so reset it to keep the examples independent.
   config.before do
-    Souq::Current.taxonomy_snapshot = nil if Souq::Current.respond_to?(:taxonomy_snapshot=)
+    Souq::Current.reset
   end
 end
