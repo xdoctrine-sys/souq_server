@@ -73,4 +73,31 @@ RSpec.describe 'SOUQ taxonomy reads', type: :request do
 
     expect(reads).to eq(1)
   end
+
+  # Two real requests through the Rack boundary: a rename plus a version bump
+  # between them must be picked up together on the next request, and the
+  # request snapshot must not leak from one request to the next.
+  it 'renders the new category name and the new version together on the next request', :inline_jobs do
+    status = publish(Fabricate(:account), 'Listing before rename')
+    attach_listing(status, category: cars, location: doha)
+
+    get '/api/v1/timelines/public', headers: headers
+
+    expect(response).to have_http_status(200)
+    first = response.parsed_body.find { |item| item['id'] == status.id.to_s }.fetch('souq_listing')
+    expect(first.fetch('category').fetch('name_en')).to eq('Cars')
+    expect(first.fetch('taxonomy_version')).to eq(version)
+    expect(Souq::Current.taxonomy_snapshot).to be_nil
+
+    cars.update!(name_en: 'Automobiles')
+    write_taxonomy_version(version + 1)
+
+    get '/api/v1/timelines/public', headers: headers
+
+    expect(response).to have_http_status(200)
+    second = response.parsed_body.find { |item| item['id'] == status.id.to_s }.fetch('souq_listing')
+    expect(second.fetch('category').fetch('name_en')).to eq('Automobiles')
+    expect(second.fetch('taxonomy_version')).to eq(version + 1)
+    expect(Souq::Current.taxonomy_snapshot).to be_nil
+  end
 end

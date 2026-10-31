@@ -37,6 +37,17 @@ RSpec.describe 'SOUQ atomic creation proof', if: ENV['SOUQ_COMMIT_PROOF'] == '1'
     Souq::Current.listing_draft = { fail: false }
   end
 
+  # Every attribute declared on Souq::Current must be empty after the request
+  # or the job, not only the one this proof happens to set. The set of names is
+  # asserted so that a new attribute cannot be added without being covered.
+  def expect_current_cleared(context)
+    names = Souq::Current.defaults.keys
+    expect(names).to contain_exactly(:listing_draft, :taxonomy_snapshot)
+    names.each do |name|
+      expect(Souq::Current.public_send(name)).to be_nil, "Souq::Current.#{name} was not reset #{context}"
+    end
+  end
+
   it '1 creates one status and one proof in the same transaction' do
     draft
     transaction_ids = []
@@ -126,9 +137,11 @@ RSpec.describe 'SOUQ atomic creation proof', if: ENV['SOUQ_COMMIT_PROOF'] == '1'
     controller.set_callback(:process_action, :before, callback)
     result = Rack::MockRequest.new(Rails.application).get('/api/v1/souq/health', 'REMOTE_ADDR' => '127.0.0.1')
     expect(result.status).to eq(200)
-    expect(Souq::Current.listing_draft).to be_nil
+    expect_current_cleared('after the Rack request')
     controller.skip_callback(:process_action, :before, callback)
-    expect(Rack::MockRequest.new(Rails.application).get('/api/v1/souq/health', 'REMOTE_ADDR' => '127.0.0.1').status).to eq(200)
+    second = Rack::MockRequest.new(Rails.application).get('/api/v1/souq/health', 'REMOTE_ADDR' => '127.0.0.1')
+    expect(second.status).to eq(200)
+    expect_current_cleared('after the next Rack request')
     expect(SouqProof::Record.count).to eq(1)
   ensure
     controller&.skip_callback(:process_action, :before, callback, raise: false)
@@ -141,9 +154,9 @@ RSpec.describe 'SOUQ atomic creation proof', if: ENV['SOUQ_COMMIT_PROOF'] == '1'
       draft
       DistributionWorker.new.perform(status.id)
     end
-    expect(Souq::Current.listing_draft).to be_nil
+    expect_current_cleared('after the Sidekiq job')
     reloader.call do
-      expect(Souq::Current.listing_draft).to be_nil
+      expect_current_cleared('before the next Sidekiq job')
       DistributionWorker.new.perform(status.id)
     end
     expect(SouqProof::Record.count).to eq(0)
