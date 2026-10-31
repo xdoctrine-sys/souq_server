@@ -33,6 +33,37 @@ module Souq
         end
       end
 
+      # Attach the listing inside the transaction PostStatusService opens
+      # around `@status.save!`: if the listing is rejected, the status rolls
+      # back with it and no distribution job is enqueued. The draft guard keeps
+      # ordinary statuses and the standard Mastodon API untouched.
+      #
+      # Declared only once: in development `to_prepare` re-runs after each code
+      # reload, which resets @applied, and a second declaration would attach the
+      # listing twice.
+      ::Status.define_method(:souq_attach_listing) do
+        Souq::Listings::Create.attach!(self, Souq::Current.listing_draft)
+      end
+
+      ::Status.after_create :souq_attach_listing, if: -> { local? && Souq::Current.listing_draft.present? } unless ::Status._create_callbacks.any? { |callback| callback.filter == :souq_attach_listing }
+
+      # Apply the SOUQ listing edit inside the transaction UpdateStatusService
+      # opens around `@status.save!`, exactly like the creation callback above.
+      # The `after_update` hook fires while the status row is still uncommitted,
+      # so a failure in any later step of the service cancels the status and the
+      # listing together, and the distribution jobs enqueued after the commit
+      # already carry the new content.
+      #
+      # The draft holds normalized values and ids only (never an ActiveRecord
+      # object), and its `consumed` flag makes sure the listing is written once
+      # even if the status is saved again later in the same call (e.g. by
+      # ProcessHashtagsService).
+      ::Status.define_method(:souq_apply_listing_update) do
+        Souq::Listings::Update.apply!(self, Souq::Current.listing_update)
+      end
+
+      ::Status.after_update :souq_apply_listing_update, if: -> { Souq::Current.listing_update.present? && !Souq::Current.listing_update[:consumed] && Souq::Current.listing_update[:status_id] == id } unless ::Status._update_callbacks.any? { |callback| callback.filter == :souq_apply_listing_update }
+
       @applied = true
     end
   end

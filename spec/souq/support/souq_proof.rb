@@ -8,6 +8,13 @@ module SouqProof
 
   class CreationError < StandardError; end
 
+  class << self
+    # Set to true to make the proof callback reject the listing. The real
+    # `souq_attach_listing` callback runs first, so the rejection happens after
+    # the real Souq::Listing row exists, inside the same transaction.
+    attr_accessor :fail_next
+  end
+
   def self.attach(status)
     draft = Souq::Current.listing_draft
     return unless status.local? && draft.present?
@@ -17,7 +24,7 @@ module SouqProof
       transaction_open: Status.connection.transaction_open?,
       transaction_id: Status.connection.select_value('SELECT txid_current()').to_s
     )
-    raise CreationError, 'proof callback rejected listing' if draft.fetch(:fail, false)
+    raise CreationError, 'proof callback rejected listing' if fail_next
   end
 
   def self.install!
@@ -44,6 +51,8 @@ module SouqProof
       Status.unscoped.where(account_id: account.id).destroy_all
       # Conversations have no cascading FK to their parent account or status.
       Conversation.where(parent_account_id: account.id).delete_all
+      # Access tokens have no FK to the account, so they are removed explicitly.
+      Doorkeeper::AccessToken.where(resource_owner_id: User.where(account_id: account.id).select(:id)).delete_all
       # Associated users, keypairs and statistics are destroyed or cascade by FK.
       account.destroy!
     end
