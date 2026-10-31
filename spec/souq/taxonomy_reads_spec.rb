@@ -6,7 +6,7 @@ require_relative 'support/taxonomy_cache'
 
 # The taxonomy version must be read once per render, not once per listing
 # field. Souq::Current lives exactly one request or one job, so a request and
-# an in-process loop have the same budget: one GET of souq:taxonomy:version.
+# an in-process loop have the same budget: one SELECT on souq_settings.
 RSpec.describe 'SOUQ taxonomy reads', type: :request do
   include_context 'with API authentication', oauth_scopes: 'read read:statuses'
 
@@ -40,7 +40,7 @@ RSpec.describe 'SOUQ taxonomy reads', type: :request do
     )
   end
 
-  it 'reads the version key once for a public timeline of 20 varied listings', :inline_jobs do
+  it 'selects the version once for a public timeline of 20 varied listings', :inline_jobs do
     20.times do |index|
       status = publish(Fabricate(:account), "Listing #{index}")
       attach_listing(status, category: index.even? ? cars : vehicles, location: index.even? ? doha : qatar)
@@ -52,7 +52,7 @@ RSpec.describe 'SOUQ taxonomy reads', type: :request do
     expect(reads).to eq(1)
   end
 
-  it 'reads the version key once when rendering one status for streaming' do
+  it 'selects the version once when rendering one status for streaming' do
     status = publish(user.account, 'Streamed listing')
     attach_listing(status, category: cars, location: doha)
 
@@ -61,7 +61,7 @@ RSpec.describe 'SOUQ taxonomy reads', type: :request do
     expect(reads).to eq(1)
   end
 
-  it 'reads the version key once for 20 serializations inside one Souq::Current' do
+  it 'selects the version once for 20 serializations inside one Souq::Current' do
     listings = Array.new(20) do |index|
       status = publish(user.account, "Listing #{index}")
       attach_listing(status, category: index.even? ? cars : vehicles, location: index.even? ? doha : qatar)

@@ -28,7 +28,7 @@ RSpec.describe Souq::TaxonomyCache do
     JSON.parse(Souq::REST::ListingSerializer.new(listing).to_json)
   end
 
-  it 'reads the version from the Redis key' do
+  it 'reads the version from the database singleton' do
     expect(described_class.version).to eq(version)
   end
 
@@ -103,12 +103,20 @@ RSpec.describe Souq::TaxonomyCache do
     expect(snapshot.category('cars')[:path].first).to be_frozen
   end
 
-  it 'falls back to souq_settings.taxonomy_version and writes the key when Redis is empty' do
+  it 'reads souq_settings.taxonomy_version without writing another store' do
     clear_taxonomy_version
     described_class.reset!
     Fabricate(:souq_setting, taxonomy_version: 9)
 
     expect(described_class.version).to eq(9)
-    expect(read_taxonomy_version).to eq('9')
+    expect(read_taxonomy_version).to eq(9)
+  end
+
+  it 'uses the bootstrap version when the singleton is missing' do
+    clear_taxonomy_version
+    described_class.reset!
+
+    expect(described_class.version).to eq(described_class::BOOTSTRAP_VERSION)
+    expect(Souq::Setting.exists?(id: 1)).to be(false)
   end
 end
