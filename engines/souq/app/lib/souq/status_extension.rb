@@ -33,6 +33,20 @@ module Souq
         end
       end
 
+      # Attach the listing inside the transaction PostStatusService opens
+      # around `@status.save!`: if the listing is rejected, the status rolls
+      # back with it and no distribution job is enqueued. The draft guard keeps
+      # ordinary statuses and the standard Mastodon API untouched.
+      #
+      # Declared only once: in development `to_prepare` re-runs after each code
+      # reload, which resets @applied, and a second declaration would attach the
+      # listing twice.
+      ::Status.define_method(:souq_attach_listing) do
+        Souq::Listings::Create.attach!(self, Souq::Current.listing_draft)
+      end
+
+      ::Status.after_create :souq_attach_listing, if: -> { local? && Souq::Current.listing_draft.present? } unless ::Status._create_callbacks.any? { |callback| callback.filter == :souq_attach_listing }
+
       @applied = true
     end
   end
