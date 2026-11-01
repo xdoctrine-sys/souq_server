@@ -156,4 +156,33 @@ RSpec.describe 'SOUQ category services' do # rubocop:disable RSpec/DescribeClass
     expect(create.category.listable).to eq(Souq::Category.column_defaults.fetch('listable'))
     expect(create(listable: false).category.listable).to be(false)
   end
+
+  it 'uses identical subtree SQL with typed binds for nullable parents and empty prefixes' do
+    statements = []
+    counter = lambda do |_name, _start, _finish, _id, payload|
+      statements << payload if payload[:name] == 'SOUQ category subtree'
+    end
+    ActiveSupport::Notifications.subscribed(counter, 'sql.active_record') do
+      move(child, other)
+      move(child, nil)
+    end
+    expect(statements.size).to eq(2)
+    expect(statements.pluck(:sql).uniq.size).to eq(1)
+    expect(statements.first[:binds].map(&:value_before_type_cast)).to eq([child.id, other.id, 0, 0, [other.id], 2])
+    expect(statements.last[:binds].map(&:value_before_type_cast)).to eq([child.id, nil, 2, -1, [], 2])
+  end
+
+  it 'does not execute a renumber update when inserting at the end of normalized siblings' do
+    statements = []
+    counter = ->(_name, _start, _finish, _id, payload) { statements << payload[:sql] if payload[:name] == 'SOUQ category order' }
+    ActiveSupport::Notifications.subscribed(counter, 'sql.active_record') { create }
+    expect(statements).to be_empty
+  end
+
+  it 'normalizes decimal id references at entry without accepting SQL-shaped identifiers' do
+    result = Souq::Categories::Move.call(account: account, category: child.id.to_s, new_parent: other.id.to_s, lock_version: child.lock_version)
+    expect(result.category.id).to eq(child.id)
+    expect(child.reload.parent_id).to eq(other.id)
+    expect { move(child, '1 OR 1=1') }.to raise_error(Souq::Categories::NotFoundError)
+  end
 end

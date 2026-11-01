@@ -37,13 +37,25 @@ module Souq
         Category.connection
       end
 
+      def normalize_reference(reference)
+        if reference.is_a?(Category)
+          raise NotFoundError, 'category not found' if reference.id.nil?
+
+          Integer(reference.id)
+        elsif reference.is_a?(Integer)
+          Integer(reference)
+        elsif reference.is_a?(String) && reference.match?(/\A[0-9]+\z/)
+          Integer(reference, 10)
+        else
+          reference
+        end
+      end
+
       def resolve(reference, optional: false)
         return if reference.nil? && optional
 
-        row = if reference.is_a?(Category)
-                @rows.find { |item| item.id == reference.id }
-              elsif reference.is_a?(Integer) || reference.to_s.match?(/\A[0-9]+\z/)
-                @rows.find { |item| item.id == reference.to_i }
+        row = if reference.is_a?(Integer)
+                @rows.find { |item| item.id == Integer(reference) }
               else
                 @rows.find { |item| item.code == reference }
               end
@@ -63,17 +75,22 @@ module Souq
       end
 
       def renumber(rows)
-        positions = rows.each_with_index.filter_map { |row, index| [row.id, index] if row.position != index }
+        positions = rows.each_with_index.filter_map { |row, index| [Integer(row.id), index] if row.position != index }
         return if positions.empty?
 
-        cases = positions.map { |id, index| "WHEN #{id} THEN #{index}" }.join(' ')
-        connection.execute(<<~SQL.squish)
+        sql = <<~SQL.squish
           UPDATE souq_categories
-          SET position = CASE id #{cases} END,
+          SET position = ordered.new_position,
               lock_version = lock_version + 1,
               updated_at = CURRENT_TIMESTAMP
-          WHERE id IN (#{positions.map(&:first).join(',')})
+          FROM unnest(ARRAY[?]::bigint[], ARRAY[?]::int[]) AS ordered(category_id, new_position)
+          WHERE souq_categories.id = ordered.category_id
         SQL
+        connection.exec_update(Category.sanitize_sql_array([sql, positions.map(&:first), positions.map(&:last)]), 'SOUQ category order')
+      end
+
+      def query_bind(column, value)
+        ActiveRecord::Relation::QueryAttribute.new(column.to_s, value, Category.type_for_attribute(column.to_s))
       end
 
       def fields(row)

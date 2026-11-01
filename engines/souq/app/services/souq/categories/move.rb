@@ -4,6 +4,8 @@ module Souq
   module Categories
     class Move < Base
       def call(account:, category:, new_parent:, lock_version: nil, position: nil)
+        category = normalize_reference(category)
+        new_parent = normalize_reference(new_parent)
         write(account: account) do
           category = resolve(category)
           parent = resolve(new_parent, optional: true)
@@ -35,21 +37,36 @@ module Souq
 
       def rewrite(category, parent, prefix, offset, position)
         @old_ancestors = category.ancestor_ids
-        parent_sql = parent ? parent.id.to_s : 'NULL'
-        array = "ARRAY[#{prefix.join(',')}]::bigint[]"
-        ancestry = "#{array} || ancestor_ids[#{category.depth + 1}:cardinality(ancestor_ids)]"
-        connection.execute(<<~SQL.squish)
+        sql = <<~SQL.squish
+          WITH movement AS (
+            SELECT CAST($1 AS bigint) AS node_id,
+                   CAST($2 AS bigint) AS target_parent_id,
+                   CAST($3 AS int) AS target_position,
+                   CAST($4 AS int) AS depth_offset,
+                   CAST($5 AS bigint[]) AS ancestor_prefix,
+                   CAST($6 AS int) AS suffix_start
+          )
           UPDATE souq_categories SET
-            parent_id = CASE WHEN id = #{category.id} THEN #{parent_sql} ELSE parent_id END,
-            position = CASE WHEN id = #{category.id} THEN #{position} ELSE position END,
-            ancestor_ids = #{ancestry},
-            depth = depth + #{offset},
+            parent_id = CASE WHEN id = movement.node_id THEN movement.target_parent_id ELSE parent_id END,
+            position = CASE WHEN id = movement.node_id THEN movement.target_position ELSE position END,
+            ancestor_ids = movement.ancestor_prefix || ancestor_ids[movement.suffix_start:cardinality(ancestor_ids)],
+            depth = depth + movement.depth_offset,
             lock_version = lock_version + 1,
             updated_at = CURRENT_TIMESTAMP
-          WHERE (id = #{category.id} OR ancestor_ids @> ARRAY[#{category.id}]::bigint[])
-            AND (ancestor_ids IS DISTINCT FROM (#{ancestry})
-              OR (id = #{category.id} AND (parent_id IS DISTINCT FROM #{parent_sql} OR position <> #{position})))
+          FROM movement
+          WHERE (id = movement.node_id OR ancestor_ids @> ARRAY[movement.node_id]::bigint[])
+            AND (ancestor_ids IS DISTINCT FROM (movement.ancestor_prefix || ancestor_ids[movement.suffix_start:cardinality(ancestor_ids)])
+              OR (id = movement.node_id AND (parent_id IS DISTINCT FROM movement.target_parent_id OR position <> movement.target_position)))
         SQL
+        binds = [
+          query_bind(:id, Integer(category.id)),
+          query_bind(:parent_id, parent ? Integer(parent.id) : nil),
+          query_bind(:position, Integer(position)),
+          query_bind(:position, Integer(offset)),
+          query_bind(:ancestor_ids, prefix.map { |id| Integer(id) }),
+          query_bind(:position, Integer(category.depth) + 1),
+        ]
+        connection.exec_update(sql, 'SOUQ category subtree', binds)
       end
     end
   end

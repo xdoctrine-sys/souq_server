@@ -4,6 +4,8 @@ module Souq
   module Categories
     class Reorder < Base
       def call(account:, parent:, ordered_ids:)
+        parent = normalize_reference(parent)
+        ordered_ids = ordered_ids.map { |id| Integer(id) } if ordered_ids.is_a?(Array) && ordered_ids.all?(Integer)
         write(account: account) do
           parent = resolve(parent, optional: true)
           rows = siblings(parent&.id)

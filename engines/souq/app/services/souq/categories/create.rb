@@ -6,6 +6,7 @@ module Souq
       FIELDS = %i(code name_en name_ar description_en description_ar icon cover_url color hashtag hashtag_ar active listable).freeze
 
       def call(account:, parent: nil, position: nil, **attributes)
+        parent = normalize_reference(parent)
         write(account: account) do
           unknown = attributes.keys - FIELDS
           raise(ValidationError, unknown.index_with { ['cannot be supplied'] }) if unknown.any?
