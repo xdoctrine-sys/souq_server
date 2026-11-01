@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_30_120003) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_01_010003) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -1191,6 +1191,48 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_30_120003) do
     t.index ["version"], name: "index_software_updates_on_version", unique: true
   end
 
+  create_table "souq_attribute_definitions", force: :cascade do |t|
+    t.boolean "active", default: true, null: false
+    t.string "code", null: false
+    t.datetime "created_at", null: false
+    t.integer "data_type", null: false
+    t.bigint "depends_on_id"
+    t.integer "filter_widget"
+    t.integer "max_length"
+    t.decimal "max_value"
+    t.decimal "min_value"
+    t.string "name_ar", null: false
+    t.string "name_en", null: false
+    t.integer "position", default: 0, null: false
+    t.boolean "searchable", default: true, null: false
+    t.string "unit"
+    t.datetime "updated_at", null: false
+    t.index ["code"], name: "index_souq_attribute_definitions_on_code", unique: true
+    t.index ["depends_on_id"], name: "index_souq_attribute_definitions_on_depends_on_id"
+    t.check_constraint "code::text ~ '^[a-z0-9_]{2,64}$'::text", name: "souq_attribute_definition_code"
+    t.check_constraint "data_type >= 0 AND data_type <= 6", name: "souq_attribute_definition_data_type"
+    t.check_constraint "depends_on_id IS NULL OR depends_on_id <> id", name: "souq_attribute_definition_dependency"
+    t.check_constraint "filter_widget IS NULL OR filter_widget >= 0 AND filter_widget <= 4", name: "souq_attribute_definition_widget"
+    t.check_constraint "max_length IS NULL OR max_length > 0", name: "souq_attribute_definition_length"
+    t.check_constraint "min_value IS NULL OR max_value IS NULL OR min_value <= max_value", name: "souq_attribute_definition_bounds"
+  end
+
+  create_table "souq_attribute_options", force: :cascade do |t|
+    t.boolean "active", default: true, null: false
+    t.string "code", null: false
+    t.datetime "created_at", null: false
+    t.bigint "definition_id", null: false
+    t.string "name_ar", null: false
+    t.string "name_en", null: false
+    t.bigint "parent_option_id"
+    t.integer "position", default: 0, null: false
+    t.datetime "updated_at", null: false
+    t.index ["definition_id", "code"], name: "index_souq_attribute_options_on_definition_id_and_code", unique: true
+    t.index ["definition_id", "position"], name: "index_souq_attribute_options_on_definition_id_and_position"
+    t.index ["parent_option_id"], name: "index_souq_attribute_options_on_parent_option_id"
+    t.check_constraint "code::text ~ '^[a-z0-9_]{2,64}$'::text", name: "souq_attribute_option_code"
+  end
+
   create_table "souq_audit_logs", force: :cascade do |t|
     t.bigint "account_id"
     t.string "action", null: false
@@ -1234,6 +1276,23 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_30_120003) do
     t.check_constraint "parent_id IS NULL OR parent_id <> id", name: "souq_category_not_own_parent"
   end
 
+  create_table "souq_category_attributes", force: :cascade do |t|
+    t.bigint "category_id", null: false
+    t.jsonb "condition"
+    t.jsonb "config", default: {}, null: false
+    t.datetime "created_at", null: false
+    t.bigint "definition_id", null: false
+    t.integer "mode", null: false
+    t.integer "position"
+    t.boolean "required"
+    t.datetime "updated_at", null: false
+    t.index ["category_id", "definition_id"], name: "idx_on_category_id_definition_id_a7ec819be9", unique: true
+    t.index ["definition_id"], name: "index_souq_category_attributes_on_definition_id"
+    t.check_constraint "condition IS NULL OR jsonb_typeof(condition) = 'object'::text", name: "souq_category_attribute_condition"
+    t.check_constraint "jsonb_typeof(config) = 'object'::text", name: "souq_category_attribute_config"
+    t.check_constraint "mode >= 0 AND mode <= 2", name: "souq_category_attribute_mode"
+  end
+
   create_table "souq_listings", force: :cascade do |t|
     t.bigint "account_id", null: false
     t.jsonb "attribute_values", default: {}, null: false
@@ -1263,7 +1322,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_30_120003) do
     t.index ["status_id"], name: "index_souq_listings_on_status_id", unique: true
     t.check_constraint "(price_mode = ANY (ARRAY[0, 1])) AND price_minor IS NOT NULL AND price_minor > 0 AND currency IS NOT NULL OR (price_mode = ANY (ARRAY[2, 3, 4])) AND price_minor IS NULL AND currency IS NULL", name: "souq_listing_price_consistency"
     t.check_constraint "char_length(title::text) >= 1 AND char_length(title::text) <= 140", name: "souq_listing_title"
-    t.check_constraint "currency IS NULL OR currency ~ '^[A-Z]{3}$'::text", name: "souq_listing_currency"
+    t.check_constraint "currency IS NULL OR currency::text ~ '^[A-Z]{3}$'::text", name: "souq_listing_currency"
     t.check_constraint "jsonb_typeof(attribute_values) = 'object'::text", name: "souq_listing_attribute_object"
     t.check_constraint "price_minor IS NULL OR price_minor > 0", name: "souq_listing_positive_price"
     t.check_constraint "price_mode >= 0 AND price_mode <= 4", name: "souq_listing_price_mode"
@@ -1750,8 +1809,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_30_120003) do
   add_foreign_key "severed_relationships", "accounts", column: "local_account_id", on_delete: :cascade
   add_foreign_key "severed_relationships", "accounts", column: "remote_account_id", on_delete: :cascade
   add_foreign_key "severed_relationships", "relationship_severance_events", on_delete: :cascade
+  add_foreign_key "souq_attribute_definitions", "souq_attribute_definitions", column: "depends_on_id", on_delete: :restrict
+  add_foreign_key "souq_attribute_options", "souq_attribute_definitions", column: "definition_id", on_delete: :cascade
+  add_foreign_key "souq_attribute_options", "souq_attribute_options", column: "parent_option_id", on_delete: :restrict
   add_foreign_key "souq_audit_logs", "accounts", on_delete: :nullify
   add_foreign_key "souq_categories", "souq_categories", column: "parent_id", on_delete: :restrict
+  add_foreign_key "souq_category_attributes", "souq_attribute_definitions", column: "definition_id", on_delete: :restrict
+  add_foreign_key "souq_category_attributes", "souq_categories", column: "category_id", on_delete: :cascade
   add_foreign_key "souq_listings", "accounts", on_delete: :cascade
   add_foreign_key "souq_listings", "souq_categories", column: "category_id", on_delete: :restrict
   add_foreign_key "souq_listings", "souq_locations", column: "location_id", on_delete: :restrict
