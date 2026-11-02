@@ -23,10 +23,11 @@ module Souq
     # Immutable, coherent view of the taxonomy for a single version: the
     # category label and the version always come from the same read.
     class Snapshot
-      attr_reader :version, :roots
+      attr_reader :version, :roots, :catalog
 
-      def initialize(version:, categories:, categories_by_id:, children_by_id:, ancestors_by_code:, descendants_by_code:, roots:, locations_by_id:)
+      def initialize(version:, categories:, categories_by_id:, children_by_id:, ancestors_by_code:, descendants_by_code:, roots:, locations_by_id:, catalog:, schemas:)
         @version = version
+        @catalog = catalog
         @categories = deep_freeze(categories)
         @categories_by_id = deep_freeze(categories_by_id)
         @children_by_id = deep_freeze(children_by_id)
@@ -34,7 +35,18 @@ module Souq
         @descendants_by_code = deep_freeze(descendants_by_code)
         @roots = deep_freeze(roots)
         @locations_by_id = deep_freeze(locations_by_id)
+        @schemas = deep_freeze(schemas)
         freeze
+      end
+
+      # The effective schema of a category, resolved once when the tree was
+      # loaded. Returns nil for an unknown code. A category whose rules cannot
+      # be resolved carries a Souq::Schema::Result marked `invalid` instead of
+      # failing the whole snapshot.
+      def schema(code)
+        return if code.nil?
+
+        @schemas[code]
       end
 
       def category(code)
@@ -101,6 +113,10 @@ module Souq
         snapshot.location(id)
       end
 
+      def schema(code)
+        snapshot.schema(code)
+      end
+
       # Drops the process tree and the request snapshot. Used by specs; in
       # production a version bump plus the natural request boundary is enough.
       def reset!
@@ -136,16 +152,44 @@ module Souq
         Souq::Setting.uncached { Souq::Setting.where(id: 1).pick(:taxonomy_version) } || BOOTSTRAP_VERSION
       end
 
+      # Two queries for the tree (categories, locations) plus exactly three for
+      # the attribute catalog (definitions, options, rules), so switching the
+      # attribute schema in is a constant cost whatever the tree size. The
+      # effective schema of every category is then resolved in memory.
       def load_tree
-        load_categories.merge(locations_by_id: load_locations)
+        tree = load_categories
+        catalog = Souq::Schema::Catalog.load
+        schemas = build_schemas(tree[:categories], catalog)
+        log_invalid_schemas(schemas)
+        tree.merge(locations_by_id: load_locations, catalog: catalog, schemas: schemas)
+      end
+
+      def build_schemas(categories, catalog)
+        categories.to_h do |code, category|
+          [code, Souq::Schema::Resolve.for_category(catalog: catalog, categories: categories, category: category)]
+        end
+      end
+
+      # A direct SQL write or a broken import can leave rules that do not
+      # resolve. The snapshot must still load for everyone else: the category
+      # keeps an `invalid` schema (rendered as 503, refused by the validator)
+      # and the problem is logged without any sensitive data.
+      def log_invalid_schemas(schemas)
+        schemas.each_value do |result|
+          next unless result.invalid?
+
+          result.issues.each do |issue|
+            Rails.logger.warn("[souq] invalid effective schema: category=#{issue.category} attribute=#{issue.attribute} code=#{issue.code}")
+          end
+        end
       end
 
       def load_categories
-        rows = Souq::Category.order(:position, :id).pluck(:id, :code, :name_en, :name_ar, :ancestor_ids, :parent_id, :position, :depth)
+        rows = Souq::Category.order(:position, :id).pluck(:id, :code, :name_en, :name_ar, :ancestor_ids, :parent_id, :position, :depth, :active)
         codes = rows.to_h { |row| [row[0], row[1]] }
-        categories = rows.to_h do |id, code, name_en, name_ar, ancestor_ids, parent_id, position, depth|
+        categories = rows.to_h do |id, code, name_en, name_ar, ancestor_ids, parent_id, position, depth, active|
           path = ancestor_ids.map { |ancestor_id| codes.fetch(ancestor_id) } + [code]
-          [code, { id: id, code: code, name_en: name_en, name_ar: name_ar, path: path, ancestor_ids: ancestor_ids, parent_id: parent_id, position: position, depth: depth }]
+          [code, { id: id, code: code, name_en: name_en, name_ar: name_ar, path: path, ancestor_ids: ancestor_ids, parent_id: parent_id, position: position, depth: depth, active: active }]
         end
         by_id = categories.values.index_by { |entry| entry[:id] }
         children = categories.values.group_by { |entry| entry[:parent_id] }

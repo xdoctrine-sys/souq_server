@@ -3,6 +3,8 @@
 Souq::Engine.routes.draw do
   get '/api/v1/souq/health', to: 'api/v1/health#show'
 
+  get '/api/v1/souq/categories/:code/schema', to: 'api/v1/schemas#show'
+
   post '/api/v1/souq/listings', to: 'api/v1/listings#create'
   get '/api/v1/souq/listings/:id', to: 'api/v1/listings#show'
   put '/api/v1/souq/listings/:id', to: 'api/v1/listings#update'
