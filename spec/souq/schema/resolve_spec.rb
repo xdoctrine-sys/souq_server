@@ -215,6 +215,115 @@ RSpec.describe Souq::Schema::Resolve do
     end
   end
 
+  describe 'bounds and length restrictions' do
+    def with_pair(parent_code, child_code)
+      root = reference_category(parent_code, parent_code, parent_code)
+      child = reference_category(child_code, child_code, child_code, parent: root)
+      [root, child]
+    end
+
+    it 'rejects a null bound instead of silently dropping the inherited restriction' do
+      root, child = with_pair('nullbound_root', 'nullbound_child')
+      definition = reference_definition('nullbound_attr', 0, 'integer')
+      reference_rule(root, definition, mode: :enable, config: { 'min_value' => 10, 'max_value' => 20 })
+      reference_rule(child, definition, mode: :override, config: { 'min_value' => nil })
+      Souq::TaxonomyCache.reset!
+
+      expect(issue_codes('nullbound_child')).to include('invalid_bound')
+    end
+
+    it 'rejects a malformed bound' do
+      root, child = with_pair('badbound_root', 'badbound_child')
+      definition = reference_definition('badbound_attr', 0, 'decimal')
+      reference_rule(root, definition, mode: :enable, config: { 'max_value' => 20 })
+      reference_rule(child, definition, mode: :override, config: { 'max_value' => 'abc' })
+      Souq::TaxonomyCache.reset!
+
+      expect(issue_codes('badbound_child')).to include('invalid_bound')
+    end
+
+    it 'rejects a bound on a non-numeric attribute' do
+      root = reference_category('textbound_root', 'Root', 'جذر')
+      definition = reference_definition('textbound_attr', 0, 'text')
+      reference_rule(root, definition, mode: :enable, config: { 'min_value' => 5 })
+      Souq::TaxonomyCache.reset!
+
+      expect(issue_codes('textbound_root')).to include('invalid_bound')
+    end
+
+    it 'rejects an override that lowers the inherited minimum' do
+      root, child = with_pair('lowmin_root', 'lowmin_child')
+      definition = reference_definition('lowmin_attr', 0, 'integer')
+      reference_rule(root, definition, mode: :enable, config: { 'min_value' => 10 })
+      reference_rule(child, definition, mode: :override, config: { 'min_value' => 5 })
+      Souq::TaxonomyCache.reset!
+
+      expect(issue_codes('lowmin_child')).to include('override_widens_bounds')
+    end
+
+    it 'keeps an override that only tightens the inherited bounds' do
+      root, child = with_pair('tight_root', 'tight_child')
+      definition = reference_definition('tight_attr', 0, 'integer')
+      reference_rule(root, definition, mode: :enable, config: { 'min_value' => 10, 'max_value' => 20 })
+      reference_rule(child, definition, mode: :override, config: { 'min_value' => 12, 'max_value' => 18 })
+      Souq::TaxonomyCache.reset!
+
+      result = schema('tight_child')
+      expect(result).to_not be_invalid
+      expect(result.attribute('tight_attr')[:min]).to eq(BigDecimal(12))
+      expect(result.attribute('tight_attr')[:max]).to eq(BigDecimal(18))
+    end
+
+    it 'fixes max_length from the enable config' do
+      root = reference_category('len_root', 'Root', 'جذر')
+      definition = reference_definition('len_attr', 0, 'text')
+      reference_rule(root, definition, mode: :enable, config: { 'max_length' => 5 })
+      Souq::TaxonomyCache.reset!
+
+      expect(schema('len_root').attribute('len_attr')[:max_length]).to eq(5)
+    end
+
+    it 'fixes max_length from the definition default when the enable carries none' do
+      root = reference_category('lendef_root', 'Root', 'جذر')
+      definition = reference_definition('lendef_attr', 0, 'text', max_length: 7)
+      reference_rule(root, definition, mode: :enable)
+      Souq::TaxonomyCache.reset!
+
+      expect(schema('lendef_root').attribute('lendef_attr')[:max_length]).to eq(7)
+    end
+
+    it 'accepts an override that lowers max_length' do
+      root, child = with_pair('lenlow_root', 'lenlow_child')
+      definition = reference_definition('lenlow_attr', 0, 'text')
+      reference_rule(root, definition, mode: :enable, config: { 'max_length' => 100 })
+      reference_rule(child, definition, mode: :override, config: { 'max_length' => 20 })
+      Souq::TaxonomyCache.reset!
+
+      result = schema('lenlow_child')
+      expect(result).to_not be_invalid
+      expect(result.attribute('lenlow_attr')[:max_length]).to eq(20)
+    end
+
+    it 'rejects an override that raises max_length' do
+      root, child = with_pair('lenraise_root', 'lenraise_child')
+      definition = reference_definition('lenraise_attr', 0, 'text')
+      reference_rule(root, definition, mode: :enable, config: { 'max_length' => 20 })
+      reference_rule(child, definition, mode: :override, config: { 'max_length' => 50 })
+      Souq::TaxonomyCache.reset!
+
+      expect(issue_codes('lenraise_child')).to include('override_widens_bounds')
+    end
+
+    it 'rejects max_length on a non-text attribute' do
+      root = reference_category('lenint_root', 'Root', 'جذر')
+      definition = reference_definition('lenint_attr', 0, 'integer')
+      reference_rule(root, definition, mode: :enable, config: { 'max_length' => 5 })
+      Souq::TaxonomyCache.reset!
+
+      expect(issue_codes('lenint_root')).to include('invalid_bound')
+    end
+  end
+
   it 'ignores inactive definitions and their rules' do
     root = reference_category('hidden_root', 'Root', 'جذر')
     definition = Fabricate(:souq_attribute_definition,

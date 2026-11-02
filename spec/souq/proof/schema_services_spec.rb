@@ -249,6 +249,21 @@ RSpec.describe 'SOUQ schema rule services at real commit', if: ENV['SOUQ_COMMIT_
     expect(fresh.schema(cars.code).codes).to include(slot_a.code)
   end
 
+  it '(g) returns the resolver warnings of the subtree at real commit' do
+    dependent = build_definition("#{code_prefix}warned", 6, 'single_option')
+    Fabricate(:souq_attribute_option, definition: dependent, code: "#{code_prefix}warnopt",
+                                      name_en: 'warned', name_ar: 'warned')
+
+    condition = { 'attribute' => "#{code_prefix}transaction", 'in' => ["#{code_prefix}rent"] }
+    result = set_rule(cars, dependent, mode: :enable, condition: condition)
+
+    expect(result.changed?).to be(true)
+    warning = result.warnings.find { |entry| entry.code == 'condition_never_true' }
+    expect(warning).to be_present
+    expect(warning.category).to eq("#{code_prefix}cars")
+    expect(warning.attribute).to eq("#{code_prefix}warned")
+  end
+
   # --- lock and interleaving helpers ---------------------------------------
 
   def lock_key

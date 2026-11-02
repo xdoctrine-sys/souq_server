@@ -10,7 +10,7 @@ module Souq
       # applied before anything is committed: a single bad descendant rolls the
       # rule, the version bump and the audit row back together.
       class Base
-        Result = Struct.new(:category_code, :definition_code, :changed, :taxonomy_version, keyword_init: true) do
+        Result = Struct.new(:category_code, :definition_code, :changed, :taxonomy_version, :warnings, keyword_init: true) do
           alias_method :changed?, :changed
         end
 
@@ -29,8 +29,8 @@ module Souq
             @transaction = transaction
             load_categories
             outcome = yield
-            validate_subtree!(outcome) if outcome[:changed]
-            finish(outcome)
+            warnings = outcome[:changed] ? validate_subtree!(outcome) : []
+            finish(outcome, warnings)
           end
         rescue ActiveRecord::RecordInvalid => e
           raise ValidationError, e.record.errors.to_hash
@@ -79,14 +79,19 @@ module Souq
 
         # Replays the resolution for the changed category and each descendant
         # with the rule change already visible in the transaction. A single
-        # issue aborts the whole operation.
+        # issue aborts the whole operation. The resolver warnings of the whole
+        # subtree are returned, each one still carrying its category and
+        # attribute, so the caller sees them without them blocking the write.
         def validate_subtree!(outcome)
           catalog = Souq::Schema::Catalog.load
           categories = Resolve.categories_from_rows(@rows)
-          issues = subtree_entries(outcome[:category_id], categories).flat_map do |entry|
-            Resolve.for_category(catalog: catalog, categories: categories, category: entry).issues
+          results = subtree_entries(outcome[:category_id], categories).map do |entry|
+            Resolve.for_category(catalog: catalog, categories: categories, category: entry)
           end
+          issues = results.flat_map(&:issues)
           raise RuleError, issues if issues.any?
+
+          results.flat_map(&:warnings)
         end
 
         def subtree_entries(category_id, categories)
@@ -96,7 +101,7 @@ module Souq
           codes.map { |code| categories.fetch(code) }
         end
 
-        def finish(outcome)
+        def finish(outcome, warnings)
           return unchanged(outcome) unless outcome[:changed]
 
           version = connection.select_value(<<~SQL.squish)
@@ -111,11 +116,12 @@ module Souq
           )
           @transaction.after_commit { Current.taxonomy_snapshot = nil }
           Result.new(category_code: outcome[:category_code], definition_code: outcome[:definition_code],
-                     changed: true, taxonomy_version: version)
+                     changed: true, taxonomy_version: version, warnings: warnings)
         end
 
         def unchanged(outcome)
-          Result.new(category_code: outcome[:category_code], definition_code: outcome[:definition_code], changed: false)
+          Result.new(category_code: outcome[:category_code], definition_code: outcome[:definition_code],
+                     changed: false, warnings: [])
         end
 
         def normalize_config(config)

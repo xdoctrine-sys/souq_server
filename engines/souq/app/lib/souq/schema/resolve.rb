@@ -10,6 +10,8 @@ module Souq
     # category and the write services can replay it inside a transaction.
     class Resolve
       OPTION_TYPES = %w(single_option multi_option).freeze
+      NUMERIC_TYPES = %w(integer decimal).freeze
+      DIGITS = /\A\d+\z/
 
       def self.call(...)
         new(...).call
@@ -69,9 +71,9 @@ module Souq
           definition: definition,
           required: rule[:required] ? true : false,
           position: rule[:position] || definition[:position],
-          min: config.key?('min_value') ? Typing.to_decimal(config['min_value']) : definition[:min_value],
-          max: config.key?('max_value') ? Typing.to_decimal(config['max_value']) : definition[:max_value],
-          max_length: definition[:max_length],
+          min: config.key?('min_value') ? bound_value(code, definition, config['min_value']) : definition[:min_value],
+          max: config.key?('max_value') ? bound_value(code, definition, config['max_value']) : definition[:max_value],
+          max_length: config.key?('max_length') ? length_value(code, definition, config['max_length']) : definition[:max_length],
           default_value: config['default_value'],
           allowed_option_codes: config['allowed_option_codes'],
           filter_widget: config.key?('filter_widget') ? config['filter_widget'] : definition[:filter_widget],
@@ -100,6 +102,7 @@ module Souq
         override_options(code, entry, config['allowed_option_codes']) if config.key?('allowed_option_codes')
         override_min(code, entry, config['min_value']) if config.key?('min_value')
         override_max(code, entry, config['max_value']) if config.key?('max_value')
+        override_max_length(code, entry, config['max_length']) if config.key?('max_length')
         entry[:default_value] = config['default_value'] if config.key?('default_value')
         entry[:filter_widget] = config['filter_widget'] if config.key?('filter_widget')
         validate_bounds(code) if config.key?('min_value') || config.key?('max_value')
@@ -122,17 +125,84 @@ module Souq
       end
 
       def override_min(code, entry, raw)
-        value = Typing.to_decimal(raw)
+        value = bound_value(code, entry[:definition], raw)
+        return if value.nil?
+
         inherited = entry[:min]
-        issue(code, 'override_widens_bounds', 'cannot lower the inherited minimum') if inherited && value && value < inherited
+        if inherited && value < inherited
+          issue(code, 'override_widens_bounds', 'cannot lower the inherited minimum')
+          return
+        end
+
         entry[:min] = value
       end
 
       def override_max(code, entry, raw)
-        value = Typing.to_decimal(raw)
+        value = bound_value(code, entry[:definition], raw)
+        return if value.nil?
+
         inherited = entry[:max]
-        issue(code, 'override_widens_bounds', 'cannot raise the inherited maximum') if inherited && value && value > inherited
+        if inherited && value > inherited
+          issue(code, 'override_widens_bounds', 'cannot raise the inherited maximum')
+          return
+        end
+
         entry[:max] = value
+      end
+
+      def override_max_length(code, entry, raw)
+        value = length_value(code, entry[:definition], raw)
+        return if value.nil?
+
+        inherited = entry[:max_length]
+        if inherited && value > inherited
+          issue(code, 'override_widens_bounds', 'cannot raise the inherited maximum length')
+          return
+        end
+
+        entry[:max_length] = value
+      end
+
+      # A bound carried by a rule config is a restriction: a null or malformed
+      # value must be reported, never silently turn into `nil` and drop the
+      # inherited bound. Bounds only exist for the numeric types.
+      def bound_value(code, definition, raw)
+        unless NUMERIC_TYPES.include?(definition[:data_type])
+          issue(code, 'invalid_bound', 'a bound is only available for numeric attributes')
+          return nil
+        end
+
+        value = Typing.to_decimal(raw)
+        if value.nil?
+          issue(code, 'invalid_bound', 'a bound must be a number')
+          return nil
+        end
+
+        value
+      end
+
+      # `max_length` is the text counterpart of a bound, fixed by an enable and
+      # only ever tightened by an override.
+      def length_value(code, definition, raw)
+        unless definition[:data_type] == 'text'
+          issue(code, 'invalid_bound', 'max_length is only available for text attributes')
+          return nil
+        end
+
+        value = positive_integer(raw)
+        if value.nil?
+          issue(code, 'invalid_bound', 'max_length must be a positive integer')
+          return nil
+        end
+
+        value
+      end
+
+      def positive_integer(raw)
+        return raw if raw.is_a?(Integer) && raw.positive?
+        return Integer(raw, 10) if raw.is_a?(String) && DIGITS.match?(raw) && raw.to_i.positive?
+
+        nil
       end
 
       def validate_allowed_codes(code, restriction, active_codes)

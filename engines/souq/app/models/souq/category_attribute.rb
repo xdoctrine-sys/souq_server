@@ -2,7 +2,7 @@
 
 module Souq
   class CategoryAttribute < ApplicationRecord
-    CONFIG_KEYS = %w(allowed_option_codes min_value max_value default_value filter_widget).freeze
+    CONFIG_KEYS = %w(allowed_option_codes min_value max_value max_length default_value filter_widget).freeze
 
     enum :mode, { enable: 0, override: 1, disable: 2 }, prefix: true, validate: true
 

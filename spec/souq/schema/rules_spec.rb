@@ -96,6 +96,80 @@ RSpec.describe 'SOUQ schema rule services' do # rubocop:disable RSpec/DescribeCl
 
       expect([read_taxonomy_version, Souq::AuditLog.count, stored_rule.config, stored_rule(child).config]).to eq(baseline)
     end
+
+    it 'returns the resolver warnings of the changed category, with category and attribute' do
+      pilot = reference_definition('rules_pilot', 1, 'single_option')
+      reference_option(pilot, 'on')
+      reference_option(pilot, 'off')
+      dependent = reference_definition('rules_dependent', 2, 'single_option')
+      reference_option(dependent, 'dd')
+
+      set_rule(root, pilot, mode: :enable, config: { 'allowed_option_codes' => ['on'] })
+      result = set_rule(root, dependent, mode: :enable, condition: { 'attribute' => 'rules_pilot', 'in' => ['off'] })
+
+      expect(result.changed?).to be(true)
+      warning = result.warnings.find { |entry| entry.code == 'condition_never_true' }
+      expect(warning).to be_present
+      expect(warning.category).to eq('rules_root')
+      expect(warning.attribute).to eq('rules_dependent')
+    end
+
+    it 'returns the resolver warnings of a descendant in the result of the write' do
+      pilot = reference_definition('rules_dpilot', 1, 'single_option')
+      reference_option(pilot, 'on')
+      reference_option(pilot, 'off')
+      dependent = reference_definition('rules_ddependent', 2, 'single_option')
+      reference_option(dependent, 'dd')
+
+      set_rule(root, pilot, mode: :enable)
+      set_rule(child, dependent, mode: :enable, condition: { 'attribute' => 'rules_dpilot', 'in' => ['off'] })
+
+      result = set_rule(root, pilot, mode: :enable, config: { 'allowed_option_codes' => ['on'] })
+
+      warning = result.warnings.find { |entry| entry.code == 'condition_never_true' }
+      expect(warning).to be_present
+      expect(warning.category).to eq('rules_child')
+      expect(warning.attribute).to eq('rules_ddependent')
+    end
+
+    it 'returns no warnings for an unchanged write' do
+      set_rule(root, definition, mode: :enable)
+
+      result = set_rule(root, definition, mode: :enable)
+
+      expect(result.changed?).to be(false)
+      expect(result.warnings).to eq([])
+    end
+
+    it 'rejects a null bound and rolls the descendant write back' do
+      number = reference_definition('rules_number', 1, 'integer')
+      set_rule(root, number, mode: :enable, config: { 'min_value' => 10, 'max_value' => 20 })
+
+      expect do
+        set_rule(child, number, mode: :override, config: { 'min_value' => nil })
+      end.to raise_error(Souq::Schema::RuleError)
+
+      expect(Souq::CategoryAttribute.find_by(category_id: child.id, definition_id: number.id)).to be_nil
+    end
+
+    it 'accepts max_length as a rule config key and stores it' do
+      text = reference_definition('rules_text', 1, 'text')
+
+      set_rule(root, text, mode: :enable, config: { 'max_length' => 12 })
+
+      expect(Souq::CategoryAttribute.find_by(category_id: root.id, definition_id: text.id).config).to eq('max_length' => 12)
+    end
+
+    it 'rejects an override that raises max_length and rolls it back' do
+      text = reference_definition('rules_text', 2, 'text')
+      set_rule(root, text, mode: :enable, config: { 'max_length' => 20 })
+
+      expect do
+        set_rule(child, text, mode: :override, config: { 'max_length' => 50 })
+      end.to raise_error(Souq::Schema::RuleError)
+
+      expect(Souq::CategoryAttribute.find_by(category_id: child.id, definition_id: text.id)).to be_nil
+    end
   end
 
   describe Souq::Schema::Rules::Remove do

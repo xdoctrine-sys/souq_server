@@ -14,9 +14,10 @@ module SouqSchemaReference
     Fabricate(:souq_category, code: code, name_en: name_en, name_ar: name_ar, parent: parent)
   end
 
-  def reference_definition(code, position, data_type, depends_on: nil)
+  def reference_definition(code, position, data_type, depends_on: nil, max_length: nil)
     Fabricate(:souq_attribute_definition, code: code, name_en: code, name_ar: code,
-                                          data_type: data_type, position: position, depends_on: depends_on)
+                                          data_type: data_type, position: position,
+                                          depends_on: depends_on, max_length: max_length)
   end
 
   def reference_option(definition, code, parent_option: nil)
