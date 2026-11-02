@@ -73,7 +73,7 @@ module Souq
           position: rule[:position] || definition[:position],
           min: config.key?('min_value') ? bound_value(code, definition, config['min_value']) : definition[:min_value],
           max: config.key?('max_value') ? bound_value(code, definition, config['max_value']) : definition[:max_value],
-          max_length: config.key?('max_length') ? length_value(code, definition, config['max_length']) : definition[:max_length],
+          max_length: enable_max_length(code, definition, config),
           default_value: config['default_value'],
           allowed_option_codes: config['allowed_option_codes'],
           filter_widget: config.key?('filter_widget') ? config['filter_widget'] : definition[:filter_widget],
@@ -173,12 +173,27 @@ module Souq
         end
 
         value = Typing.to_decimal(raw)
-        if value.nil?
-          issue(code, 'invalid_bound', 'a bound must be a number')
+        # A value convertible to BigDecimal is not necessarily a valid bound:
+        # "NaN", "Infinity" and "-Infinity" parse without raising but compare
+        # in no useful way, so they must never replace an inherited restriction.
+        if value.nil? || !value.finite?
+          issue(code, 'invalid_bound', 'a bound must be a finite number')
           return nil
         end
 
         value
+      end
+
+      # An enable fixes `max_length` from its config, otherwise from the
+      # definition. A text attribute is never left unbounded: when neither
+      # provides one, the platform default applies. Exposing it (instead of
+      # `nil`) keeps the serialized schema, the validator and the override
+      # comparison consistent, so a descendant can only ever tighten it.
+      def enable_max_length(code, definition, config)
+        configured = config.key?('max_length') ? length_value(code, definition, config['max_length']) : definition[:max_length]
+        return configured unless definition[:data_type] == 'text'
+
+        configured || Typing::DEFAULT_MAX_LENGTH
       end
 
       # `max_length` is the text counterpart of a bound, fixed by an enable and

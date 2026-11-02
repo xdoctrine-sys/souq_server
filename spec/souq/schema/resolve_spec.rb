@@ -242,6 +242,21 @@ RSpec.describe Souq::Schema::Resolve do
       expect(issue_codes('badbound_child')).to include('invalid_bound')
     end
 
+    it 'rejects a non-finite bound instead of letting it replace the inherited one' do
+      %w(NaN Infinity -Infinity).each_with_index do |raw, index|
+        root, child = with_pair("nonfinite#{index}_root", "nonfinite#{index}_child")
+        definition = reference_definition("nonfinite#{index}_attr", 0, 'decimal')
+        reference_rule(root, definition, mode: :enable, config: { 'min_value' => 10, 'max_value' => 20 })
+        reference_rule(child, definition, mode: :override, config: { 'max_value' => raw })
+        Souq::TaxonomyCache.reset!
+
+        result = schema("nonfinite#{index}_child")
+        expect(result.issues.pluck(:code)).to include('invalid_bound')
+        # The inherited maximum is kept: the malformed override never applies.
+        expect(result.attribute("nonfinite#{index}_attr")[:max]).to eq(BigDecimal(20))
+      end
+    end
+
     it 'rejects a bound on a non-numeric attribute' do
       root = reference_category('textbound_root', 'Root', 'جذر')
       definition = reference_definition('textbound_attr', 0, 'text')
@@ -321,6 +336,40 @@ RSpec.describe Souq::Schema::Resolve do
       Souq::TaxonomyCache.reset!
 
       expect(issue_codes('lenint_root')).to include('invalid_bound')
+    end
+
+    it 'applies the default text limit when neither the config nor the definition sets one' do
+      root = reference_category('deflen_root', 'Root', 'جذر')
+      definition = reference_definition('deflen_attr', 0, 'text')
+      reference_rule(root, definition, mode: :enable)
+      Souq::TaxonomyCache.reset!
+
+      expect(schema('deflen_root').attribute('deflen_attr')[:max_length]).to eq(Souq::Schema::Typing::DEFAULT_MAX_LENGTH)
+    end
+
+    it 'rejects an override that widens the default text limit to 2000' do
+      root, child = with_pair('deflenraise_root', 'deflenraise_child')
+      definition = reference_definition('deflenraise_attr', 0, 'text')
+      reference_rule(root, definition, mode: :enable)
+      reference_rule(child, definition, mode: :override, config: { 'max_length' => 2000 })
+      Souq::TaxonomyCache.reset!
+
+      result = schema('deflenraise_child')
+      expect(result.issues.pluck(:code)).to include('override_widens_bounds')
+      # The effective limit stays at the default, it is never raised.
+      expect(result.attribute('deflenraise_attr')[:max_length]).to eq(Souq::Schema::Typing::DEFAULT_MAX_LENGTH)
+    end
+
+    it 'accepts an override that tightens the default text limit' do
+      root, child = with_pair('deflentight_root', 'deflentight_child')
+      definition = reference_definition('deflentight_attr', 0, 'text')
+      reference_rule(root, definition, mode: :enable)
+      reference_rule(child, definition, mode: :override, config: { 'max_length' => 400 })
+      Souq::TaxonomyCache.reset!
+
+      result = schema('deflentight_child')
+      expect(result).to_not be_invalid
+      expect(result.attribute('deflentight_attr')[:max_length]).to eq(400)
     end
   end
 

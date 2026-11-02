@@ -42,6 +42,9 @@ RSpec.describe Souq::ListingAttributesValidator do
     features = extra_definition('features', 3, 'multi_option')
     size = extra_definition('size', 4, 'single_option')
     colour = extra_definition('colour', 5, 'single_option')
+    # A text attribute with no explicit max_length: the schema exposes the
+    # platform default (1000) and the validator must enforce it.
+    description = extra_definition('description', 6, 'text')
 
     reference_option(features, 'ac')
     reference_option(features, 'abs')
@@ -56,6 +59,7 @@ RSpec.describe Souq::ListingAttributesValidator do
     reference_rule(root, features, mode: :enable)
     reference_rule(root, size, mode: :enable, config: { 'allowed_option_codes' => %w(sm md) })
     reference_rule(root, colour, mode: :enable)
+    reference_rule(root, description, mode: :enable)
   end
 
   def extra_definition(code, position, data_type)
@@ -186,6 +190,11 @@ RSpec.describe Souq::ListingAttributesValidator do
       result = validate({ 'note' => '  a  b ' }, category: 'val')
 
       expect(result.values.fetch('note')).to eq('a b')
+    end
+
+    it 'enforces the default text limit of 1000 when the schema sets none' do
+      expect(validate({ 'description' => 'a' * 1000 }, category: 'val')).to be_valid
+      expect(error_codes(validate({ 'description' => 'a' * 1001 }, category: 'val'), 'description')).to eq(%w(too_long))
     end
 
     it 'reports a malformed date differently from a wrong type' do

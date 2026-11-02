@@ -170,6 +170,41 @@ RSpec.describe 'SOUQ schema rule services' do # rubocop:disable RSpec/DescribeCl
 
       expect(Souq::CategoryAttribute.find_by(category_id: child.id, definition_id: text.id)).to be_nil
     end
+
+    it 'rejects a non-finite bound and rolls the descendant write back' do
+      number = reference_definition('rules_nonfinite', 1, 'decimal')
+      set_rule(root, number, mode: :enable, config: { 'min_value' => 1, 'max_value' => 9 })
+
+      %w(NaN Infinity -Infinity).each do |raw|
+        expect do
+          set_rule(child, number, mode: :override, config: { 'max_value' => raw })
+        end.to raise_error(Souq::Schema::RuleError)
+      end
+
+      expect(Souq::CategoryAttribute.find_by(category_id: child.id, definition_id: number.id)).to be_nil
+    end
+
+    it 'rejects a descendant widening the default text limit and rolls it back' do
+      text = reference_definition('rules_deflen', 1, 'text')
+      set_rule(root, text, mode: :enable)
+
+      expect do
+        set_rule(child, text, mode: :override, config: { 'max_length' => 2000 })
+      end.to raise_error(Souq::Schema::RuleError)
+
+      expect(Souq::CategoryAttribute.find_by(category_id: child.id, definition_id: text.id)).to be_nil
+      expect(Souq::CategoryAttribute.find_by(category_id: root.id, definition_id: text.id)).to be_present
+    end
+
+    it 'accepts a descendant tightening the default text limit' do
+      text = reference_definition('rules_deftight', 1, 'text')
+      set_rule(root, text, mode: :enable)
+
+      result = set_rule(child, text, mode: :override, config: { 'max_length' => 400 })
+
+      expect(result.changed?).to be(true)
+      expect(Souq::CategoryAttribute.find_by(category_id: child.id, definition_id: text.id)).to be_present
+    end
   end
 
   describe Souq::Schema::Rules::Remove do
