@@ -145,6 +145,7 @@ module Souq
 
       def apply(account)
         write_categories
+        validate_effective_schema!
         write_markets
         write_links
         version = increment_version
@@ -234,6 +235,22 @@ module Souq
           row.active = false if row.active?
           row.save! if row.changed?
         end
+      end
+
+      # The document only rewrites the category tree, so the effective schema of
+      # every category is replayed against the new ancestry while the import
+      # transaction is still open: a move it applied can orphan a rule inherited
+      # from a former ancestor (design section 3.4), exactly like
+      # `Souq::Categories::Move`. Aborting here keeps the previous version
+      # untouched instead of leaving `/schema` to answer 503 on every request.
+      def validate_effective_schema!
+        catalog = Souq::Schema::Catalog.load
+        rows = Category.order(:id).pluck(:id, :code, :ancestor_ids)
+        categories = Souq::Schema::Resolve.categories_from_rows(rows)
+        issues = rows.flat_map do |_id, code, _ancestor_ids|
+          Souq::Schema::Resolve.for_category(catalog: catalog, categories: categories, category: categories.fetch(code)).issues
+        end
+        raise Souq::Schema::RuleError, issues if issues.any?
       end
 
       def write_markets

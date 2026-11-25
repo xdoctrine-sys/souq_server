@@ -4,12 +4,16 @@ require 'rails_helper'
 require_relative '../support/taxonomy'
 require_relative '../support/taxonomy_cache'
 require_relative '../support/taxonomy_document'
+require_relative '../support/attributes'
+require_relative '../support/schema_reference'
 
 # T3: the importer applies a validated taxonomy document to the database. The
 # examples cover the contract the plan states: codes used as stable keys, a dry
 # run that writes nothing, one atomic transaction, an idempotent second import
 # and deactivation instead of deletion.
 RSpec.describe Souq::Taxonomy::Importer do
+  include SouqSchemaReference
+
   let!(:account) { Fabricate(:account) }
 
   def import(raw, dry_run: false)
@@ -246,6 +250,28 @@ RSpec.describe Souq::Taxonomy::Importer do
       taxonomy_category('cars', parent_code: 'vehicles', position: 0),
     ])
     expect { import(moved) }.to raise_error('audit failure')
+    expect(snapshot).to eq(before)
+  end
+
+  it 'refuses to import a move that would orphan an inherited override' do
+    vehicles = reference_category('vehicles', 'Vehicles', 'مركبات')
+    cars = reference_category('cars', 'Cars', 'سيارات', parent: vehicles)
+    definition = reference_definition('import_override_attr', 0, 'single_option')
+    reference_option(definition, 'aa')
+    reference_rule(vehicles, definition, mode: :enable)
+    reference_rule(cars, definition, mode: :override, config: { 'allowed_option_codes' => ['aa'] })
+
+    before = snapshot
+    # `cars` leaves `vehicles`, so its `override` no longer inherits the
+    # attribute: exactly the orphaned `override` the design calls an error
+    # (section 3.4). The import must abort instead of leaving `/schema` to
+    # answer 503 on every later request.
+    moved = taxonomy_document(markets: [], categories: [taxonomy_category('cars', position: 0)])
+
+    expect { import(moved) }
+      .to raise_error(Souq::Schema::RuleError) do |error|
+        expect(error.issues.map(&:code)).to include('override_without_inherited')
+      end
     expect(snapshot).to eq(before)
   end
 
