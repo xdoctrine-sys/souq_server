@@ -79,6 +79,22 @@ RSpec.describe Souq::Schema::Resolve do
   end
 
   describe 'inheritance rules' do
+    it 'restricts a dependent attribute options by allowed_option_codes as well' do
+      root = reference_category('dep_restr_root', 'Root', 'جذر')
+      brand = reference_definition('dep_restr_brand', 0, 'single_option')
+      model = reference_definition('dep_restr_model', 1, 'single_option', depends_on: brand)
+      toyota = reference_option(brand, 'toyota')
+      nissan = reference_option(brand, 'nissan')
+      reference_option(model, 'corolla', parent_option: toyota)
+      reference_option(model, 'patrol', parent_option: nissan)
+      reference_rule(root, brand, mode: :enable)
+      reference_rule(root, model, mode: :enable, config: { 'allowed_option_codes' => ['corolla'] })
+      Souq::TaxonomyCache.reset!
+
+      entry = schema('dep_restr_root').attribute('dep_restr_model')
+      expect(entry[:options].pluck(:code)).to eq(%w(corolla))
+    end
+
     it 'reactivates an attribute disabled higher up with an enable in a descendant' do
       root = reference_category('react_root', 'Root', 'جذر')
       child = reference_category('react_child', 'Child', 'ابن', parent: root)

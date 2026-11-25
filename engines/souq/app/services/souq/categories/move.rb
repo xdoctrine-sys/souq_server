@@ -25,6 +25,7 @@ module Souq
 
           before = fields(category)
           rewrite(category, parent, prefix, offset, position)
+          validate_subtree!(category.id)
           category.reload
           new_rows.insert(position, category)
           renumber(siblings(old_parent_id, excluding: category.id)) if old_parent_id != parent&.id
@@ -34,6 +35,26 @@ module Souq
       end
 
       private
+
+      # A move rewrites the ancestry of the moved node and every descendant, so
+      # a rule inherited from the old ancestors (typically an `override`) can be
+      # orphaned by the new placement (design section 3.4). Replay the
+      # resolution of the whole moved subtree with the new ancestry already
+      # visible in the transaction and abort the move if one of them becomes
+      # invalid, exactly like the rule services.
+      def validate_subtree!(category_id)
+        catalog = Souq::Schema::Catalog.load
+        rows = Category.order(:id).pluck(:id, :code, :ancestor_ids)
+        categories = Souq::Schema::Resolve.categories_from_rows(rows)
+        issues = subtree_codes(rows, category_id).flat_map do |code|
+          Souq::Schema::Resolve.for_category(catalog: catalog, categories: categories, category: categories.fetch(code)).issues
+        end
+        raise Souq::Schema::RuleError, issues if issues.any?
+      end
+
+      def subtree_codes(rows, category_id)
+        rows.filter_map { |id, code, ancestor_ids| code if id == category_id || ancestor_ids.include?(category_id) }
+      end
 
       def rewrite(category, parent, prefix, offset, position)
         @old_ancestors = category.ancestor_ids
