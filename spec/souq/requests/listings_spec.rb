@@ -449,4 +449,34 @@ RSpec.describe 'SOUQ listings API', type: :request do
       expect(listing.reload.state).to eq('hidden')
     end
   end
+
+  # The status of a listing can be soft-deleted (author deletion, moderation, or the
+  # `preserve: true` path of RemoveStatusService) before the removal worker catches up.
+  # `Status` is scoped to `kept`, so `listing.status` then returns `nil`; every route
+  # must answer the same 404 as an unknown id instead of raising a 500 (and must not
+  # leak whether the listing exists).
+  describe 'when the listing status was soft-deleted' do
+    let(:listing) { fabricate_listing(account: user.account) }
+
+    before { listing.status.discard_with_reblogs }
+
+    it 'answers 404 on GET instead of raising' do
+      get "/api/v1/souq/listings/#{listing.id}", headers: headers
+
+      expect(response).to have_http_status(404)
+      expect(response.content_type).to start_with('application/json')
+    end
+
+    it 'answers 404 on PUT instead of raising' do
+      put "/api/v1/souq/listings/#{listing.id}", params: { listing: { title: 'Updated' } }, headers: headers
+
+      expect(response).to have_http_status(404)
+    end
+
+    it 'answers 404 on POST state instead of raising' do
+      post "/api/v1/souq/listings/#{listing.id}/state", params: { state: 'sold' }, headers: headers
+
+      expect(response).to have_http_status(404)
+    end
+  end
 end
