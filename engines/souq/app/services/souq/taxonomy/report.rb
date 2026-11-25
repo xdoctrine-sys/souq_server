@@ -45,26 +45,30 @@ module Souq
       end
 
       # Market to category links, held as [market_code, category_code] pairs.
+      # `reordered` lists the pairs whose position in the market changed without
+      # being added or removed: the document is authoritative for the order too.
       class Links
-        attr_reader :added, :removed
+        attr_reader :added, :removed, :reordered
 
-        def initialize(added: [], removed: [])
+        def initialize(added: [], removed: [], reordered: [])
           @added = added.freeze
           @removed = removed.freeze
+          @reordered = reordered.freeze
         end
 
         def changed?
-          added.any? || removed.any?
+          added.any? || removed.any? || reordered.any?
         end
 
         def to_h
-          { 'added' => pairs_to_h(added), 'removed' => pairs_to_h(removed) }
+          { 'added' => pairs_to_h(added), 'removed' => pairs_to_h(removed), 'reordered' => pairs_to_h(reordered) }
         end
 
         def text
-          header = "market links: #{added.size} added, #{removed.size} removed"
+          header = "market links: #{added.size} added, #{removed.size} removed, #{reordered.size} reordered"
           lines = added.map { |market, category| "  + market #{market} -> category #{category}" }
           lines.concat(removed.map { |market, category| "  - market #{market} -> category #{category} (unlinked)" })
+          lines.concat(reordered.map { |market, category| "  ~ market #{market} -> category #{category} (reordered)" })
           [header, *lines]
         end
 
@@ -102,10 +106,16 @@ module Souq
       end
 
       def to_text
-        header = dry_run ? 'DRY RUN: nothing was written' : "taxonomy_version #{taxonomy_version}"
-        lines = [header, *categories.text('category'), *markets.text('market'), *links.text]
-        lines << 'no difference' unless changed?
-        lines.join("\n")
+        [header, *categories.text('category'), *markets.text('market'), *links.text].join("\n")
+      end
+
+      # A run that changes nothing has no new version to show: printing
+      # "taxonomy_version " with a nil value only confused the operator.
+      def header
+        return 'DRY RUN: nothing was written' if dry_run
+        return 'no difference' unless changed?
+
+        "taxonomy_version #{taxonomy_version}"
       end
     end
   end

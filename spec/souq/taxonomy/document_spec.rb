@@ -43,6 +43,19 @@ RSpec.describe Souq::Taxonomy::Document do
     expect(invalid(taxonomy_document(markets: [], categories: [taxonomy_category('cars', hashtag: 'Cars')]))).to include('categories[0].hashtag')
   end
 
+  it 'rejects a color the database would refuse, so a dry run cannot pass it' do
+    expect(invalid(taxonomy_document(markets: [], categories: [taxonomy_category('cars', color: 'red')]))).to include('categories[0].color')
+    expect(invalid(taxonomy_document(markets: [], categories: [taxonomy_category('cars', color: '#12345')]))).to include('categories[0].color')
+
+    market = taxonomy_market('motors', color: 'rgb(1,2,3)')
+    expect(invalid(taxonomy_document(markets: [market], categories: [taxonomy_category('cars')]))).to include('markets[0].color')
+  end
+
+  it 'accepts a well-formed hex color and a null color' do
+    expect { described_class.new(taxonomy_document(markets: [], categories: [taxonomy_category('cars', color: '#A1b2C3')])) }.to_not raise_error
+    expect { described_class.new(taxonomy_document(markets: [], categories: [taxonomy_category('cars', color: nil)])) }.to_not raise_error
+  end
+
   it 'rejects unknown parents, cycles and a depth beyond three' do
     orphan = taxonomy_category('cars', parent_code: 'unknown')
     expect(invalid(taxonomy_document(markets: [], categories: [orphan]))).to include('categories[cars].parent_code')

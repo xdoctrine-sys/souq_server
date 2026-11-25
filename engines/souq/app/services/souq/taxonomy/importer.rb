@@ -104,14 +104,21 @@ module Souq
       def link_section
         added = []
         removed = []
+        reordered = []
         @document.markets.each do |entry|
           row = @existing_markets[entry['code']]
           current = links_for(row.id).index_by { |link| @category_code_by_id[link.category_id] } if row
           desired = entry['categories']
-          desired.each { |code| added << [entry['code'], code] unless current&.key?(code) }
+          desired.each_with_index do |code, position|
+            if current&.key?(code)
+              reordered << [entry['code'], code] if current[code].position != position
+            else
+              added << [entry['code'], code]
+            end
+          end
           current&.each_key { |code| removed << [entry['code'], code] unless desired.include?(code) }
         end
-        Report::Links.new(added: added, removed: removed)
+        Report::Links.new(added: added, removed: removed, reordered: reordered)
       end
 
       def deactivated_codes(rows, desired_codes)

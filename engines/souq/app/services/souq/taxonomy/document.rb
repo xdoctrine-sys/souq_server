@@ -102,6 +102,7 @@ module Souq
           validate_code(market['code'], "#{path}.code")
           validate_labels(market, path)
           validate_optional_strings(market, MARKET_STRING_KEYS, path)
+          validate_color(market['color'], "#{path}.color")
           validate_position(market['position'], "#{path}.position")
           validate_boolean(market['active'], "#{path}.active")
           validate_string_list(market['categories'], "#{path}.categories")
@@ -121,6 +122,7 @@ module Souq
           validate_code(category['parent_code'], "#{path}.parent_code") unless category['parent_code'].nil?
           validate_labels(category, path)
           validate_optional_strings(category, CATEGORY_STRING_KEYS, path)
+          validate_color(category['color'], "#{path}.color")
           validate_hashtags(category, path)
           validate_position(category['position'], "#{path}.position")
           validate_boolean(category['active'], "#{path}.active")
@@ -229,6 +231,16 @@ module Souq
           value = entry[key]
           add_error("#{path}.#{key}", 'must be a string or null') unless value.nil? || value.is_a?(String)
         end
+      end
+
+      # The model refuses a malformed color (Souq::TaxonomyFields). The document
+      # must refuse it too, otherwise a dry run would pass a value the real
+      # import then rejects with a single model validation.
+      def validate_color(value, path)
+        return if value.nil?
+        return if value.is_a?(String) && COLOR_PATTERN.match?(value)
+
+        add_error(path, "must match #{COLOR_PATTERN.source}")
       end
 
       def validate_hashtags(entry, path)

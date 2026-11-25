@@ -65,6 +65,41 @@ RSpec.describe Souq::Taxonomy::Importer do
     expect(report.links.added).to be_empty
   end
 
+  it 'detects a reordered market link and applies the new positions' do
+    import(taxonomy_document(
+      categories: [taxonomy_category('vehicles', position: 0), taxonomy_category('services', position: 1)],
+      markets: [taxonomy_market('motors', categories: %w(vehicles services))]
+    ))
+
+    report = import(taxonomy_document(
+      categories: [taxonomy_category('vehicles', position: 0), taxonomy_category('services', position: 1)],
+      markets: [taxonomy_market('motors', categories: %w(services vehicles))]
+    ))
+
+    expect(report).to be_changed
+    expect(report.links.reordered).to contain_exactly(%w(motors services), %w(motors vehicles))
+
+    market = Souq::Market.find_by!(code: 'motors')
+    ordered = Souq::MarketCategory.where(market: market).order(:position).map { |link| link.category.code }
+    expect(ordered).to eq(%w(services vehicles))
+
+    again = import(taxonomy_document(
+      categories: [taxonomy_category('vehicles', position: 0), taxonomy_category('services', position: 1)],
+      markets: [taxonomy_market('motors', categories: %w(services vehicles))]
+    ))
+    expect(again).to_not be_changed
+  end
+
+  it 'prints no difference without an empty version when an import changes nothing' do
+    import(reference_document)
+    report = import(reference_document)
+
+    expect(report).to_not be_changed
+    lines = report.to_text.lines.map(&:strip)
+    expect(lines).to include('no difference')
+    expect(lines).to_not include('taxonomy_version')
+  end
+
   it 'computes the same report in a dry run and writes nothing' do
     dry = import(reference_document, dry_run: true)
 
