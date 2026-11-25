@@ -110,6 +110,49 @@ RSpec.describe Souq::Taxonomy::Importer do
     expect(bikes.depth).to eq(1)
   end
 
+  it 'rewrites the ancestry of every descendant, including inactive ones, when an ancestor moves' do
+    import(taxonomy_document(markets: [], categories: [
+      taxonomy_category('vehicles', position: 0),
+      taxonomy_category('cars', parent_code: 'vehicles', position: 0),
+      taxonomy_category('parts', parent_code: 'cars', position: 0),
+      taxonomy_category('bodywork', parent_code: 'cars', position: 1),
+      taxonomy_category('services', position: 1),
+    ]))
+
+    services = Souq::Category.find_by!(code: 'services')
+    vehicles = Souq::Category.find_by!(code: 'vehicles')
+
+    # `bodywork` is left out of the new document: it must be deactivated, never
+    # deleted, and — because its ancestor `vehicles` moved — its own ancestry
+    # must follow. The deferred tree trigger checks every row at commit, so a
+    # stale descendant would roll the whole import back.
+    report = import(taxonomy_document(markets: [], categories: [
+      taxonomy_category('services', position: 0),
+      taxonomy_category('vehicles', parent_code: 'services', position: 0),
+      taxonomy_category('cars', parent_code: 'vehicles', position: 0),
+      taxonomy_category('parts', parent_code: 'cars', position: 0),
+    ]))
+
+    expect(report.categories.updated).to include('vehicles')
+    expect(report.categories.deactivated).to eq(['bodywork'])
+
+    expect(vehicles.reload.ancestor_ids).to eq([services.id])
+    expect(vehicles.depth).to eq(1)
+
+    cars = Souq::Category.find_by!(code: 'cars')
+    expect(cars.ancestor_ids).to eq([services.id, vehicles.id])
+    expect(cars.depth).to eq(2)
+
+    parts = Souq::Category.find_by!(code: 'parts')
+    expect(parts.ancestor_ids).to eq([services.id, vehicles.id, cars.id])
+    expect(parts.depth).to eq(3)
+
+    bodywork = Souq::Category.find_by!(code: 'bodywork')
+    expect(bodywork).to_not be_active
+    expect(bodywork.ancestor_ids).to eq([services.id, vehicles.id, cars.id])
+    expect(bodywork.depth).to eq(3)
+  end
+
   it 'moves an existing root under a parent created by the same import' do
     import(taxonomy_document(markets: [], categories: [taxonomy_category('vehicles', position: 1), taxonomy_category('bikes', position: 0)]))
 
@@ -149,6 +192,26 @@ RSpec.describe Souq::Taxonomy::Importer do
 
     expect { import(reference_document) }.to raise_error('audit failure')
     expect(snapshot).to eq([[], [], [], nil, 0])
+  end
+
+  it 'rolls a whole move back, descendants included, when a later step fails' do
+    import(taxonomy_document(markets: [], categories: [
+      taxonomy_category('vehicles', position: 0),
+      taxonomy_category('cars', parent_code: 'vehicles', position: 0),
+      taxonomy_category('bodywork', parent_code: 'cars', position: 1),
+      taxonomy_category('services', position: 1),
+    ]))
+    before = snapshot
+
+    allow(Souq::AuditLog).to receive(:create!).and_raise('audit failure')
+
+    moved = taxonomy_document(markets: [], categories: [
+      taxonomy_category('services', position: 0),
+      taxonomy_category('vehicles', parent_code: 'services', position: 0),
+      taxonomy_category('cars', parent_code: 'vehicles', position: 0),
+    ])
+    expect { import(moved) }.to raise_error('audit failure')
+    expect(snapshot).to eq(before)
   end
 
   it 'refuses an account that is not persisted' do

@@ -155,7 +155,7 @@ module Souq
           parent = entry['parent_code'] ? @rows.fetch(entry['parent_code']) : nil
           attributes = category_attributes(entry)
           if row
-            reparent(row, parent) if row.parent_id != parent&.id
+            reparent(row, parent) if ancestry_stale?(row, parent)
             row.assign_attributes(attributes)
             row.save! if row.changed?
           else
@@ -163,7 +163,7 @@ module Souq
           end
           @rows[entry['code']] = row
         end
-        deactivate_absent_categories
+        rewrite_absent_categories
       end
 
       def ordered_categories
@@ -187,12 +187,24 @@ module Souq
         end
       end
 
+      # A row needs its ancestry rewritten when its own parent changed *or* when
+      # an ancestor moved and left the stored path stale. Comparing the whole
+      # path, not just `parent_id`, is what lets a descendant of a moved
+      # ancestor be fixed even though its own `parent_id` did not change.
+      def ancestry_stale?(row, parent)
+        row.parent_id != parent&.id || row.ancestor_ids != expected_ancestors(parent)
+      end
+
+      def expected_ancestors(parent)
+        parent ? parent.ancestor_ids + [parent.id] : []
+      end
+
       # parent_id, ancestor_ids and depth change together: the deferred trigger
       # only checks the final rows at commit, so children are rewritten after
       # their parent in the same transaction.
       def reparent(row, parent)
         row.parent = parent
-        row.ancestor_ids = parent ? parent.ancestor_ids + [parent.id] : []
+        row.ancestor_ids = expected_ancestors(parent)
         row.depth = row.ancestor_ids.size
       end
 
@@ -200,10 +212,20 @@ module Souq
         CATEGORY_FIELDS.index_with { |field| entry[field] }
       end
 
-      def deactivate_absent_categories
+      # A category absent from the document is deactivated, never deleted, and
+      # every descendant follows: moving an ancestor rewrites the path of *all*
+      # descendants, including the ones that are not in the document. Rows are
+      # walked parents-first (a stored depth orders a parent before its
+      # children) so each row reads the already-rewritten path of its parent.
+      def rewrite_absent_categories
         desired = @document.category_codes.to_set
-        @existing_categories.each_value do |row|
-          row.update!(active: false) unless desired.include?(row.code) || !row.active?
+        absent = @existing_categories.values.reject { |row| desired.include?(row.code) }
+        absent.sort_by { |row| [row.depth, row.id] }.each do |row|
+          parent = row.parent_id ? @existing_categories[@category_code_by_id[row.parent_id]] : nil
+          expected = expected_ancestors(parent)
+          reparent(row, parent) if row.ancestor_ids != expected || row.depth != expected.size
+          row.active = false if row.active?
+          row.save! if row.changed?
         end
       end
 
