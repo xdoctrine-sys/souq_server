@@ -279,7 +279,10 @@ module Souq
         return [] unless OPTION_TYPES.include?(definition[:data_type])
 
         active = @catalog.active_options(definition[:code])
-        restriction = definition[:depends_on] ? nil : entry[:allowed_option_codes]
+        # A category restriction and a parent-option dependency are orthogonal:
+        # the restriction must keep narrowing the list even when the attribute
+        # depends on a pilot (design section 3.4).
+        restriction = entry[:allowed_option_codes]
         active = active.select { |option| restriction.include?(option[:code]) } if restriction
         active.map do |option|
           { code: option[:code], name_en: option[:name_en], name_ar: option[:name_ar],

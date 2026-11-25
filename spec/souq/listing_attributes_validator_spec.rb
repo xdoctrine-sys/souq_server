@@ -60,11 +60,32 @@ RSpec.describe Souq::ListingAttributesValidator do
     reference_rule(root, size, mode: :enable, config: { 'allowed_option_codes' => %w(sm md) })
     reference_rule(root, colour, mode: :enable)
     reference_rule(root, description, mode: :enable)
+
+    # A category whose whole schema is required, so the "submitted but empty"
+    # case can be told apart from the "not submitted" one.
+    required_root = reference_category('req', 'Required', 'مطلوب')
+    req_features = extra_definition('req_features', 0, 'multi_option')
+    req_note = extra_definition('req_note', 1, 'text')
+    reference_option(req_features, 'ac')
+    reference_rule(required_root, req_features, mode: :enable, required: true)
+    reference_rule(required_root, req_note, mode: :enable, required: true)
+
+    # A multi_option that depends on a single_option pilot: each chosen option
+    # must belong to the selected pilot option, like the single_option case.
+    dependent_root = reference_category('dep_multi', 'Dependent', 'تابع')
+    pilot = extra_definition('dep_pilot', 0, 'single_option')
+    dependent = extra_definition('dep_choice', 1, 'multi_option', depends_on: pilot)
+    aa = reference_option(pilot, 'aa')
+    bb = reference_option(pilot, 'bb')
+    reference_option(dependent, 'x1', parent_option: aa)
+    reference_option(dependent, 'x2', parent_option: bb)
+    reference_rule(dependent_root, pilot, mode: :enable)
+    reference_rule(dependent_root, dependent, mode: :enable)
   end
 
-  def extra_definition(code, position, data_type)
+  def extra_definition(code, position, data_type, depends_on: nil)
     Fabricate(:souq_attribute_definition, code: code, name_en: code, name_ar: code,
-                                          data_type: data_type, position: position)
+                                          data_type: data_type, position: position, depends_on: depends_on)
   end
 
   describe 'a valid sale listing' do
@@ -214,6 +235,40 @@ RSpec.describe Souq::ListingAttributesValidator do
       result = validate({ 'transaction_type' => 'sale', 'brand' => 'toyota', 'model' => 'patrol' })
 
       expect(error_codes(result, 'model')).to eq(%w(parent_option_mismatch))
+    end
+
+    it 'checks the parent option of every entry of a multi_option too' do
+      result = validate({ 'dep_pilot' => 'aa', 'dep_choice' => %w(x2) }, category: 'dep_multi')
+
+      expect(error_codes(result, 'dep_choice')).to eq(%w(parent_option_mismatch))
+    end
+
+    it 'accepts a multi_option whose entries all belong to the selected pilot option' do
+      expect(validate({ 'dep_pilot' => 'aa', 'dep_choice' => %w(x1) }, category: 'dep_multi')).to be_valid
+    end
+
+    it 'reports a missing pilot for a multi_option as well' do
+      result = validate({ 'dep_choice' => %w(x1) }, category: 'dep_multi')
+
+      expect(error_codes(result, 'dep_choice')).to eq(%w(dependency_not_satisfied))
+    end
+  end
+
+  describe 'an attribute submitted empty while required' do
+    it 'reports a required multi_option given an empty list' do
+      result = validate({ 'req_features' => [], 'req_note' => 'ok' }, category: 'req')
+
+      expect(error_codes(result, 'req_features')).to eq(%w(required))
+    end
+
+    it 'reports a required text given only whitespace' do
+      result = validate({ 'req_features' => %w(ac), 'req_note' => "   \t " }, category: 'req')
+
+      expect(error_codes(result, 'req_note')).to eq(%w(required))
+    end
+
+    it 'accepts a required list with a choice and a required text with content' do
+      expect(validate({ 'req_features' => %w(ac), 'req_note' => 'ok' }, category: 'req')).to be_valid
     end
   end
 end

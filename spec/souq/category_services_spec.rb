@@ -3,8 +3,12 @@
 require 'rails_helper'
 require_relative 'support/taxonomy'
 require_relative 'support/taxonomy_cache'
+require_relative 'support/attributes'
+require_relative 'support/schema_reference'
 
 RSpec.describe 'SOUQ category services' do # rubocop:disable RSpec/DescribeClass
+  include SouqSchemaReference
+
   let!(:account) { Fabricate(:account) }
   let!(:root) { Fabricate(:souq_category, position: 0) }
   let!(:other) { Fabricate(:souq_category, position: 1) }
@@ -184,5 +188,23 @@ RSpec.describe 'SOUQ category services' do # rubocop:disable RSpec/DescribeClass
     expect(result.category.id).to eq(child.id)
     expect(child.reload.parent_id).to eq(other.id)
     expect { move(child, '1 OR 1=1') }.to raise_error(Souq::Categories::NotFoundError)
+  end
+
+  # M-04: a move rewrites the ancestry of the whole subtree, which can orphan an
+  # `override` rule inherited from the old ancestors. Like the rule services
+  # (design section 3.4), the move must replay the resolution of the moved node
+  # and its descendants and refuse the whole operation if one becomes invalid.
+  it 'refuses to move a subtree that would orphan an inherited override' do
+    definition = reference_definition('move_override_attr', 0, 'single_option')
+    reference_option(definition, 'aa')
+    reference_rule(root, definition, mode: :enable)
+    reference_rule(child, definition, mode: :override, config: { 'allowed_option_codes' => ['aa'] })
+    Souq::TaxonomyCache.reset!
+
+    expect_unchanged do
+      expect { move(child, other) }.to raise_error(Souq::Schema::RuleError) do |error|
+        expect(error.issues.map(&:code)).to include('override_without_inherited')
+      end
+    end
   end
 end

@@ -110,10 +110,27 @@ module Souq
         return
       end
 
+      # A required attribute submitted empty (`[]`, `""`, `"   "`, `nil`) is
+      # missing in effect: report `required` rather than letting it normalize
+      # into a nonsensical value or a misleading type error.
+      if entry[:required] && met && empty_value?(submitted[code])
+        add(code, 'required')
+        return
+      end
+
       return add(code, 'not_allowed_for_condition') unless met
 
       value = normalize_value(entry, submitted[code], submitted)
       @normalized[code] = value unless value.equal?(INVALID)
+    end
+
+    def empty_value?(value)
+      case value
+      when nil then true
+      when String then value.strip.empty?
+      when Array then value.empty?
+      else false
+      end
     end
 
     def condition_met?(entry, submitted)
@@ -126,7 +143,7 @@ module Souq
     def normalize_value(entry, value, submitted)
       case entry[:data_type]
       when 'single_option' then normalize_single(entry, value, submitted)
-      when 'multi_option' then normalize_multi(entry, value)
+      when 'multi_option' then normalize_multi(entry, value, submitted)
       else normalize_scalar(entry, value)
       end
     end
@@ -151,7 +168,7 @@ module Souq
       validate_parent_option(entry, value, submitted) || value
     end
 
-    def normalize_multi(entry, value)
+    def normalize_multi(entry, value, submitted)
       return invalid(entry, 'invalid_type') unless value.is_a?(Array) && value.all?(String)
       return invalid(entry, 'duplicate_option') unless value.uniq.size == value.size
 
@@ -163,6 +180,7 @@ module Souq
         return invalid(entry, 'unknown_option') unless all.include?(option_code)
         return invalid(entry, 'inactive_option') unless active.include?(option_code)
         return invalid(entry, 'not_allowed_option') unless allowed.include?(option_code)
+        return INVALID if validate_parent_option(entry, option_code, submitted)
       end
       value
     end
