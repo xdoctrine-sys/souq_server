@@ -212,6 +212,43 @@ RSpec.describe 'SOUQ listing update proof', if: ENV['SOUQ_COMMIT_PROOF'] == '1',
     expect_listing_update_payload(published["timeline:#{account.id}"].last)
   end
 
+  # Like snapshot_from_another_connection, but reports the media ids attached to
+  # the status, to prove a media-only edit reaches the database before the
+  # broadcast (section 3 B: `media_ids` is applied through the status
+  # transaction).
+  def media_snapshot_from_another_connection(status_id)
+    Thread.new do
+      ActiveRecord::Base.connection_pool.with_connection do
+        Status.find_by(id: status_id)&.ordered_media_attachment_ids
+      end
+    end.value
+  end
+
+  it '(h) PUT with a new media selection is already visible from another connection when it broadcasts' do
+    listing = create_listing
+    media = Fabricate(:media_attachment, account: account)
+
+    DistributionWorker.clear
+    ActivityPub::StatusUpdateDistributionWorker.clear
+
+    observations = []
+    allow(DistributionWorker).to receive(:perform_async).and_wrap_original do |original, *args|
+      observations << media_snapshot_from_another_connection(args.first)
+      original.call(*args)
+    end
+
+    put "/api/v1/souq/listings/#{listing.id}",
+        params: {
+          status: { media_ids: [media.id.to_s] },
+          listing: { title: 'Proof listing title', price_mode: 'fixed', price: '1250.00' },
+        },
+        headers: headers
+
+    expect(response).to have_http_status(200)
+    expect(observations).to eq([[media.id]])
+    expect(listing.status.reload.ordered_media_attachment_ids).to eq([media.id])
+  end
+
   it '(d) POST state with the state already in place enqueues no job' do
     listing = create_listing
     listing.update!(state: 'sold', sold_at: Time.current)

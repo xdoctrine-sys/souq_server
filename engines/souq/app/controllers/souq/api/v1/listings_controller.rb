@@ -18,6 +18,7 @@ class Souq::Api::V1::ListingsController < Api::BaseController
 
   override_rate_limit_headers :create, family: :statuses
   override_rate_limit_headers :update, family: :statuses
+  override_rate_limit_headers :state, family: :statuses
 
   rescue_from Souq::Listings::ValidationError, with: :render_listing_error
 
