@@ -18,6 +18,7 @@ class Souq::Api::V1::ListingsController < Api::BaseController
 
   override_rate_limit_headers :create, family: :statuses
   override_rate_limit_headers :update, family: :statuses
+  override_rate_limit_headers :state, family: :statuses
 
   rescue_from Souq::Listings::ValidationError, with: :render_listing_error
 
@@ -59,6 +60,10 @@ class Souq::Api::V1::ListingsController < Api::BaseController
   # leaks whether the listing exists.
   def set_listing
     @listing = Souq::Listing.find(params[:id])
+    # A soft-deleted status resolves to `nil` (Status is scoped to `kept`); a listing
+    # whose status is gone is answered as an unknown id instead of raising a 500.
+    return not_found if @listing.status.nil?
+
     authorize @listing.status, :show?
   rescue ActiveRecord::RecordNotFound, Mastodon::NotPermittedError
     not_found
@@ -69,6 +74,8 @@ class Souq::Api::V1::ListingsController < Api::BaseController
   # section 5.3, prompt requirement 7).
   def set_owned_listing
     @listing = Souq::Listing.find(params[:id])
+    return not_found if @listing.status.nil?
+
     return not_found unless policy(@listing.status).show?
 
     authorize @listing.status, :update?
