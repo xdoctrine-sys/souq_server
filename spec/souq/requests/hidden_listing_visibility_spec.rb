@@ -17,6 +17,16 @@ require_relative '../support/taxonomy_cache'
 #   * GET /api/v1/accounts/:id/statuses  (profile)
 #   * GET /api/v1/timelines/home         (redis-backed home feed / subscriptions)
 #
+# Two indirect paths reach the same content and are covered too, because they
+# carry identifiers of their own and escape an id-based filter:
+#   * a share (reblog) created before the masking embeds the hidden status in
+#     its nested `reblog` payload, and keeps a *different* id and author, so it
+#     must leave the booster profile / follower feed and serve no nested content
+#     through the status endpoint;
+#   * a distribution task enqueued while the listing was still visible and run
+#     only after the masking must publish nothing to the public streams and
+#     insert nothing into a reader feed.
+#
 # The owner keeps the access the product grants them: the platform lock on
 # `hidden` answers 422 (not 404), so the owner must still resolve their own
 # status through the direct endpoints (Listings::ChangeState).
@@ -201,6 +211,157 @@ RSpec.describe 'SOUQ hidden listing visibility', type: :request do
 
       expect(response).to have_http_status(422)
       expect(listing.reload.state).to eq('hidden')
+    end
+  end
+
+  # A share (reblog) created while the listing was still visible keeps its own
+  # id and its own author, and carries the shared status in its nested `reblog`
+  # payload; an id-based filter therefore misses it. It must leave the profile
+  # and the feed of the account that shared it, and the status endpoint must
+  # serve neither the share nor the nested content. Ordinary shares are kept.
+  describe 'a share created before the listing was hidden' do
+    let(:booster) { Fabricate(:account) }
+
+    def share(status)
+      ReblogService.new.call(booster, status)
+    end
+
+    it 'answers 404 and serves no nested content to an anonymous reader' do
+      listing = listing_for(seller, state: 'active')
+      boost = share(listing.status)
+      listing.update!(state: 'hidden')
+
+      get "/api/v1/statuses/#{boost.id}"
+
+      expect(response).to have_http_status(404)
+      expect(response.parsed_body).to_not have_key('reblog')
+      expect(response.parsed_body).to_not have_key('text')
+    end
+
+    it 'answers 404 to an authenticated reader who is not the owner' do
+      listing = listing_for(seller, state: 'active')
+      boost = share(listing.status)
+      listing.update!(state: 'hidden')
+
+      get "/api/v1/statuses/#{boost.id}", headers: headers
+
+      expect(response).to have_http_status(404)
+      expect(response.parsed_body).to_not have_key('reblog')
+    end
+
+    it 'removes the share from the booster profile and keeps an ordinary share' do
+      listing = listing_for(seller, state: 'active')
+      hidden_boost = share(listing.status)
+      listing.update!(state: 'hidden')
+
+      plain = Fabricate(:status, account: seller, visibility: :public)
+      plain_boost = share(plain)
+
+      get "/api/v1/accounts/#{booster.id}/statuses", headers: headers
+
+      expect(response).to have_http_status(200)
+      ids = status_ids(response.parsed_body)
+      expect(ids).to include(plain_boost.id.to_s)
+      expect(ids).to_not include(hidden_boost.id.to_s)
+      nested = response.parsed_body.filter_map { |status| status['reblog'] }.pluck('id')
+      expect(nested).to_not include(listing.status_id.to_s)
+    end
+
+    it 'removes the share from the booster own profile when the booster is the reader' do
+      listing = listing_for(seller, state: 'active')
+      boost = ReblogService.new.call(owner, listing.status)
+      listing.update!(state: 'hidden')
+
+      plain = Fabricate(:status, account: seller, visibility: :public)
+      plain_boost = ReblogService.new.call(owner, plain)
+
+      get "/api/v1/accounts/#{owner.id}/statuses", headers: headers
+
+      expect(response).to have_http_status(200)
+      ids = status_ids(response.parsed_body)
+      expect(ids).to include(plain_boost.id.to_s)
+      expect(ids).to_not include(boost.id.to_s)
+      nested = response.parsed_body.filter_map { |status| status['reblog'] }.pluck('id')
+      expect(nested).to_not include(listing.status_id.to_s)
+    end
+
+    it 'removes the share from a follower home feed' do
+      listing = listing_for(seller, state: 'active')
+      boost = share(listing.status)
+      listing.update!(state: 'hidden')
+
+      owner.follow!(booster)
+      FeedManager.instance.push_to_home(owner, boost)
+
+      get '/api/v1/timelines/home', headers: headers
+
+      expect(status_ids(response.parsed_body)).to_not include(boost.id.to_s)
+    end
+
+    it 'still serves a share of a visible listing with its nested content' do
+      listing = listing_for(seller, state: 'active')
+      boost = share(listing.status)
+
+      get "/api/v1/statuses/#{boost.id}"
+
+      expect(response).to have_http_status(200)
+      expect(response.parsed_body.fetch('reblog').fetch('souq_listing').fetch('state')).to eq('active')
+    end
+  end
+
+  # A distribution job can be enqueued while the listing is still visible and
+  # run only after the masking. Running it must publish nothing to the public
+  # streams and insert nothing into a reader feed; ordinary statuses keep their
+  # distribution untouched.
+  describe 'a distribution task enqueued before the listing was hidden' do
+    let(:follower) { Fabricate(:user, current_sign_in_at: Time.now.utc).account }
+
+    before do
+      DistributionWorker.clear
+      FeedInsertWorker.clear
+    end
+
+    def run_distribution
+      published = Hash.new { |hash, channel| hash[channel] = [] }
+      allow(redis).to receive(:publish) { |channel, message| published[channel] << message }
+      DistributionWorker.jobs.each { |job| DistributionWorker.new.perform(*job['args']) }
+      published
+    end
+
+    it 'does not publish a hidden listing to the public streams' do
+      listing = listing_for(seller, state: 'active')
+      follower.follow!(seller)
+
+      DistributionWorker.perform_async(listing.status_id) # queued while still visible
+      listing.update!(state: 'hidden') # masked before the job runs
+
+      published = run_distribution
+
+      expect(published).to be_empty
+      expect(FeedInsertWorker.jobs).to be_empty
+    end
+
+    it 'does not insert a hidden listing into a home feed when the pending job runs after masking' do
+      listing = listing_for(seller, state: 'active')
+      follower.follow!(seller)
+
+      FeedInsertWorker.perform_async(listing.status_id, follower.id, 'home')
+      listing.update!(state: 'hidden')
+
+      FeedInsertWorker.jobs.each { |job| FeedInsertWorker.new.perform(*job['args']) }
+
+      expect(redis.zscore(FeedManager.instance.key(:home, follower.id), listing.status_id)).to be_nil
+    end
+
+    it 'still distributes an ordinary public status' do
+      status = Fabricate(:status, account: seller, visibility: :public)
+      follower.follow!(seller)
+
+      DistributionWorker.perform_async(status.id)
+
+      published = run_distribution
+
+      expect(published['timeline:public']).to be_present
     end
   end
 end

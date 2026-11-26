@@ -19,13 +19,35 @@ module Souq
     # status; the platform locks the *state transition*, not the read.
     HIDDEN_LISTING_STATUS_IDS = -> { Souq::Listing.state_hidden.select(:status_id) }
 
+    # Removes a hidden listing from a status relation, shares included. A share
+    # (reblog) keeps its own id and its own author and carries the hidden status
+    # in its nested payload, so an id-based filter misses it and the shared
+    # content stays readable (audit M-05.4). `reblog_of_id` is NULL on ordinary
+    # statuses and SQL's `NOT IN` never matches NULL, so the NULL branch is
+    # spelled out explicitly.
+    #
+    # `keep_author` narrows the filter to the hidden listings of *other*
+    # accounts, which is how a profile owner keeps seeing their own hidden
+    # listing while a share of someone else's hidden listing still leaves their
+    # profile.
+    def self.without_hidden_listings(relation, keep_author: nil)
+      hidden = HIDDEN_LISTING_STATUS_IDS.call
+      hidden = hidden.where.not(account_id: keep_author.id) if keep_author
+
+      base = relation.where.not(id: hidden)
+      base.where(reblog_of_id: nil).or(base.where.not(reblog_of_id: hidden))
+    end
+
     module StatusPolicyMethods
       # `record` is a Status. A hidden listing is not readable by anyone except
-      # its owner, so both `GET /api/v1/statuses/:id` and the SOUQ read API
+      # its author, so `GET /api/v1/statuses/:id` and the SOUQ read API
       # (`GET /api/v1/souq/listings/:id`, which authorizes the same policy)
-      # answer the same 404 as an unknown id.
+      # answer the same 404 as an unknown id. The check looks at `proper`, the
+      # status a share points to, so a share created before the masking (with a
+      # different id and a different author) is answered the same way.
       def show?
-        return false if record.souq_listing&.state_hidden? && !owned?
+        proper = record.proper
+        return false if proper.souq_listing&.state_hidden? && proper.account_id != current_account&.id
 
         super
       end
@@ -33,23 +55,54 @@ module Souq
 
     module PublicFeedMethods
       def public_scope
-        super.where.not(id: HIDDEN_LISTING_STATUS_IDS.call)
+        Souq::StatusExtension.without_hidden_listings(super)
       end
     end
 
     module AccountStatusesFilterMethods
       # A hidden listing leaves its author's profile too, but the author keeps
-      # seeing it on their own profile.
+      # seeing it on their own profile; its shares leave the booster's profile.
+      #
+      # The exception is narrowed to the owner of the original content: the
+      # profile owner reads their own hidden listing, but a share of *another*
+      # account's hidden listing still leaves their profile. A blanket
+      # `return super if current_account == account` would have opened the whole
+      # profile, booster shares of someone else's hidden listing included
+      # (audit M-05.4).
       def initial_scope
-        return super if current_account == account
+        return Souq::StatusExtension.without_hidden_listings(super, keep_author: current_account) if current_account == account
 
-        super.where.not(id: Souq::Listing.state_hidden.where(account_id: account.id).select(:status_id))
+        Souq::StatusExtension.without_hidden_listings(super)
       end
     end
 
     module FeedMethods
       def from_redis(limit, max_id, since_id, min_id)
-        super.where.not(id: HIDDEN_LISTING_STATUS_IDS.call)
+        Souq::StatusExtension.without_hidden_listings(super)
+      end
+    end
+
+    # A distribution task can be enqueued while the listing is still visible and
+    # run only after the masking (audit M-05.4): running it must publish nothing
+    # to the public streams and insert nothing into a reader feed. Looking at
+    # `proper` also drops a share of a hidden listing.
+    module FanOutOnWriteMethods
+      def call(status, options = {})
+        return if status.proper.souq_listing&.state_hidden?
+
+        super
+      end
+    end
+
+    # Same guard for a feed insertion task enqueued before the masking: the
+    # worker re-reads the status, so it refuses a listing hidden by the time it
+    # runs, whatever the reader it was destined for.
+    module FeedInsertWorkerMethods
+      def perform(status_id, id, type = 'home', options = {})
+        status = Status.find_by(id: status_id)
+        return if status&.proper&.souq_listing&.state_hidden?
+
+        super
       end
     end
 
@@ -112,11 +165,15 @@ module Souq
 
       # Remove hidden listings from every local read surface the reader can hit
       # directly. `StatusPolicy` covers the status and SOUQ read APIs, the other
-      # three cover the timelines (public, profile, redis-backed home).
+      # three cover the timelines (public, profile, redis-backed home). The last
+      # two close the deferred path: a distribution or feed insertion task
+      # enqueued while the listing was visible and run after the masking.
       ::StatusPolicy.prepend(StatusPolicyMethods) unless ::StatusPolicy <= StatusPolicyMethods
       ::PublicFeed.prepend(PublicFeedMethods) unless ::PublicFeed <= PublicFeedMethods
       ::AccountStatusesFilter.prepend(AccountStatusesFilterMethods) unless ::AccountStatusesFilter <= AccountStatusesFilterMethods
       ::Feed.prepend(FeedMethods) unless ::Feed <= FeedMethods
+      ::FanOutOnWriteService.prepend(FanOutOnWriteMethods) unless ::FanOutOnWriteService <= FanOutOnWriteMethods
+      ::FeedInsertWorker.prepend(FeedInsertWorkerMethods) unless ::FeedInsertWorker <= FeedInsertWorkerMethods
 
       @applied = true
     end
