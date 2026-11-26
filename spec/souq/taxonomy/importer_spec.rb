@@ -70,15 +70,17 @@ RSpec.describe Souq::Taxonomy::Importer do
   end
 
   it 'detects a reordered market link and applies the new positions' do
-    import(taxonomy_document(
+    original = taxonomy_document(
       categories: [taxonomy_category('vehicles', position: 0), taxonomy_category('services', position: 1)],
       markets: [taxonomy_market('motors', categories: %w(vehicles services))]
-    ))
+    )
+    import(original)
 
-    report = import(taxonomy_document(
+    reordered = taxonomy_document(
       categories: [taxonomy_category('vehicles', position: 0), taxonomy_category('services', position: 1)],
       markets: [taxonomy_market('motors', categories: %w(services vehicles))]
-    ))
+    )
+    report = import(reordered)
 
     expect(report).to be_changed
     expect(report.links.reordered).to contain_exactly(%w(motors services), %w(motors vehicles))
@@ -87,10 +89,11 @@ RSpec.describe Souq::Taxonomy::Importer do
     ordered = Souq::MarketCategory.where(market: market).order(:position).map { |link| link.category.code }
     expect(ordered).to eq(%w(services vehicles))
 
-    again = import(taxonomy_document(
+    unchanged = taxonomy_document(
       categories: [taxonomy_category('vehicles', position: 0), taxonomy_category('services', position: 1)],
       markets: [taxonomy_market('motors', categories: %w(services vehicles))]
-    ))
+    )
+    again = import(unchanged)
     expect(again).to_not be_changed
   end
 
@@ -150,13 +153,17 @@ RSpec.describe Souq::Taxonomy::Importer do
   end
 
   it 'rewrites the ancestry of every descendant, including inactive ones, when an ancestor moves' do
-    import(taxonomy_document(markets: [], categories: [
-      taxonomy_category('vehicles', position: 0),
-      taxonomy_category('cars', parent_code: 'vehicles', position: 0),
-      taxonomy_category('parts', parent_code: 'cars', position: 0),
-      taxonomy_category('bodywork', parent_code: 'cars', position: 1),
-      taxonomy_category('services', position: 1),
-    ]))
+    initial = taxonomy_document(
+      markets: [],
+      categories: [
+        taxonomy_category('vehicles', position: 0),
+        taxonomy_category('cars', parent_code: 'vehicles', position: 0),
+        taxonomy_category('parts', parent_code: 'cars', position: 0),
+        taxonomy_category('bodywork', parent_code: 'cars', position: 1),
+        taxonomy_category('services', position: 1),
+      ]
+    )
+    import(initial)
 
     services = Souq::Category.find_by!(code: 'services')
     vehicles = Souq::Category.find_by!(code: 'vehicles')
@@ -165,31 +172,29 @@ RSpec.describe Souq::Taxonomy::Importer do
     # deleted, and — because its ancestor `vehicles` moved — its own ancestry
     # must follow. The deferred tree trigger checks every row at commit, so a
     # stale descendant would roll the whole import back.
-    report = import(taxonomy_document(markets: [], categories: [
-      taxonomy_category('services', position: 0),
-      taxonomy_category('vehicles', parent_code: 'services', position: 0),
-      taxonomy_category('cars', parent_code: 'vehicles', position: 0),
-      taxonomy_category('parts', parent_code: 'cars', position: 0),
-    ]))
+    moved = taxonomy_document(
+      markets: [],
+      categories: [
+        taxonomy_category('services', position: 0),
+        taxonomy_category('vehicles', parent_code: 'services', position: 0),
+        taxonomy_category('cars', parent_code: 'vehicles', position: 0),
+        taxonomy_category('parts', parent_code: 'cars', position: 0),
+      ]
+    )
+    report = import(moved)
 
     expect(report.categories.updated).to include('vehicles')
     expect(report.categories.deactivated).to eq(['bodywork'])
 
-    expect(vehicles.reload.ancestor_ids).to eq([services.id])
-    expect(vehicles.depth).to eq(1)
-
     cars = Souq::Category.find_by!(code: 'cars')
-    expect(cars.ancestor_ids).to eq([services.id, vehicles.id])
-    expect(cars.depth).to eq(2)
-
     parts = Souq::Category.find_by!(code: 'parts')
-    expect(parts.ancestor_ids).to eq([services.id, vehicles.id, cars.id])
-    expect(parts.depth).to eq(3)
-
     bodywork = Souq::Category.find_by!(code: 'bodywork')
+
+    expect(vehicles.reload).to have_attributes(ancestor_ids: [services.id], depth: 1)
+    expect(cars).to have_attributes(ancestor_ids: [services.id, vehicles.id], depth: 2)
+    expect(parts).to have_attributes(ancestor_ids: [services.id, vehicles.id, cars.id], depth: 3)
     expect(bodywork).to_not be_active
-    expect(bodywork.ancestor_ids).to eq([services.id, vehicles.id, cars.id])
-    expect(bodywork.depth).to eq(3)
+    expect(bodywork).to have_attributes(ancestor_ids: [services.id, vehicles.id, cars.id], depth: 3)
   end
 
   it 'moves an existing root under a parent created by the same import' do
@@ -234,21 +239,28 @@ RSpec.describe Souq::Taxonomy::Importer do
   end
 
   it 'rolls a whole move back, descendants included, when a later step fails' do
-    import(taxonomy_document(markets: [], categories: [
-      taxonomy_category('vehicles', position: 0),
-      taxonomy_category('cars', parent_code: 'vehicles', position: 0),
-      taxonomy_category('bodywork', parent_code: 'cars', position: 1),
-      taxonomy_category('services', position: 1),
-    ]))
+    original = taxonomy_document(
+      markets: [],
+      categories: [
+        taxonomy_category('vehicles', position: 0),
+        taxonomy_category('cars', parent_code: 'vehicles', position: 0),
+        taxonomy_category('bodywork', parent_code: 'cars', position: 1),
+        taxonomy_category('services', position: 1),
+      ]
+    )
+    import(original)
     before = snapshot
 
     allow(Souq::AuditLog).to receive(:create!).and_raise('audit failure')
 
-    moved = taxonomy_document(markets: [], categories: [
-      taxonomy_category('services', position: 0),
-      taxonomy_category('vehicles', parent_code: 'services', position: 0),
-      taxonomy_category('cars', parent_code: 'vehicles', position: 0),
-    ])
+    moved = taxonomy_document(
+      markets: [],
+      categories: [
+        taxonomy_category('services', position: 0),
+        taxonomy_category('vehicles', parent_code: 'services', position: 0),
+        taxonomy_category('cars', parent_code: 'vehicles', position: 0),
+      ]
+    )
     expect { import(moved) }.to raise_error('audit failure')
     expect(snapshot).to eq(before)
   end
